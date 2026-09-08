@@ -13,10 +13,14 @@ const upload = multer({
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
-app.get("/api/health", (_req, res) => {
+app.get("/api/health", (req, res) => {
+  const customKey = req.headers["x-api-key"] || req.query.apiKey;
+  const apiKey = customKey || process.env.GEMINI_API_KEY;
   res.json({
     ok: true,
-    geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
+    geminiConfigured: Boolean(apiKey),
+    hasCustomKey: Boolean(customKey),
+    source: customKey ? "custom" : (process.env.GEMINI_API_KEY ? "env" : "none"),
     model: process.env.GEMINI_MODEL || "gemini-3.6-flash"
   });
 });
@@ -76,8 +80,9 @@ function matchPriceBook(items, products) {
 
 app.post("/api/parse-invoice", upload.any(), async (req, res) => {
   try {
-    if (!process.env.GEMINI_API_KEY) {
-      return res.status(500).json({ error: "GEMINI_API_KEY is not configured. Copy .env.example to .env and add your key." });
+    const apiKey = req.headers["x-api-key"] || req.body.apiKey || process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(400).json({ error: "GEMINI_API_KEY is not configured. Please add your API key in Settings or set it in server .env." });
     }
 
     const files = req.files && req.files.length ? req.files : (req.file ? [req.file] : []);
@@ -93,7 +98,7 @@ app.post("/api/parse-invoice", upload.any(), async (req, res) => {
     let products = [];
     try { products = JSON.parse(req.body.storeProducts || "[]"); } catch { }
 
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const ai = new GoogleGenAI({ apiKey });
     const prompt = `
 You are Koko Invoice, a highly accurate retail and wholesale invoice extraction system.
 This request contains ${files.length} page(s)/image(s) of an invoice.
