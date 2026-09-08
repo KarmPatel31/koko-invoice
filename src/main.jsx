@@ -1166,40 +1166,41 @@ function PriceBooks({ data, save, activeStore, activeStoreId, setActiveStoreId, 
       complete: ({ data: rawRows }) => {
         if (!rawRows || !rawRows.length) return notify("CSV file was empty.");
 
-        // Check if first row is a header row
+        // Detect if first row is a header row
         const firstRow = rawRows[0] || [];
         const isHeader = firstRow.some(cell => {
           const s = String(cell).toLowerCase();
-          return s.includes("upc") || s.includes("name") || s.includes("dept") || s.includes("department") || s.includes("retail") || s.includes("price") || s.includes("pos") || s.includes("item");
+          return s.includes("upc") || s.includes("name") || s.includes("dept") || s.includes("department") || s.includes("retail") || s.includes("price") || s.includes("pos") || s.includes("plu") || s.includes("item");
         });
 
         const rows = isHeader ? rawRows.slice(1) : rawRows;
 
         const products = rows.map(r => {
-          // Column A (0) = UPC, Column B (1) = Name, Column E (4) = Department, Column G (6) = Retail Price (POS)
-          const upc = String(r[0] ?? "").trim();
-          const name = String(r[1] ?? r[0] ?? "Unnamed item").trim();
-          const department = String(r[4] ?? "Miscellaneous").trim() || "Miscellaneous";
-          
-          // Retail Price: Column G (index 6), fallback to last numeric column if < 7 columns
-          let rawPrice = r[6];
-          if (rawPrice == null || rawPrice === "") {
-            for (let i = r.length - 1; i >= 2; i--) {
-              if (r[i] != null && String(r[i]).replace(/[^0-9.]/g, "") !== "") {
-                rawPrice = r[i];
-                break;
+          if (Array.isArray(r)) {
+            // Column B (1) = Name, Column C (2) = UPC/PLU, Column E (4) = Department, Column G (6) = Retail Price (POS)
+            const name = String(r[1] ?? r[0] ?? "Unnamed item").trim();
+            const upc = String(r[2] ?? r[0] ?? "").trim();
+            const department = String(r[4] ?? "Miscellaneous").trim() || "Miscellaneous";
+
+            let rawPrice = r[6];
+            if (rawPrice == null || rawPrice === "") {
+              for (let i = r.length - 1; i >= 0; i--) {
+                if (i !== 1 && i !== 2 && i !== 4 && r[i] != null && String(r[i]).replace(/[^0-9.]/g, "") !== "") {
+                  rawPrice = r[i];
+                  break;
+                }
               }
             }
+            const retail = Number(String(rawPrice || 0).replace(/[^0-9.]/g, "")) || 0;
+            return { upc, name, department, retail };
+          } else {
+            const name = String(r.Name ?? r.name ?? r.Product ?? r.Description ?? r[1] ?? "Unnamed item").trim();
+            const upc = String(r["UPC/PLU"] ?? r["UPC / PLU"] ?? r.UPC ?? r.upc ?? r.PLU ?? r.Barcode ?? r.GTIN ?? r[2] ?? "").trim();
+            const department = String(r.Department ?? r.department ?? r.Category ?? r[4] ?? "Miscellaneous").trim() || "Miscellaneous";
+            const rawPrice = r["Retail Price (POS)"] ?? r["Retail Price"] ?? r["POS Price"] ?? r.Price ?? r.Retail ?? r.SRP ?? r.retail ?? r.POS ?? r[6] ?? 0;
+            const retail = Number(String(rawPrice).replace(/[^0-9.]/g, "")) || 0;
+            return { upc, name, department, retail };
           }
-
-          const retail = Number(String(rawPrice || 0).replace(/[^0-9.]/g, "")) || 0;
-
-          return {
-            upc,
-            name,
-            department,
-            retail
-          };
         }).filter(x => (x.upc && x.upc.match(/\d+/)) || (x.name && x.name !== "Unnamed item"));
 
         const stores = data.stores.map(s => s.id === activeStoreId ? { ...s, products } : s);
@@ -1227,7 +1228,7 @@ function PriceBooks({ data, save, activeStore, activeStoreId, setActiveStoreId, 
   };
 
   const downloadSample = () => {
-    const csv = "UPC,Name,Cost,Margin,Department,Tax,Retail Price (POS)\n049000050103,Coca-Cola 20oz,1.50,40%,Beverages,Y,2.49\n028400090896,Lay's Classic 2.65oz,1.60,40%,Candy & Snacks,Y,2.69\n012000001017,Pepsi 20oz,1.50,40%,Beverages,Y,2.49\n";
+    const csv = "Item Code,Name,UPC/PLU,Cost,Department,Tax,Retail Price (POS)\n1001,Coca-Cola 20oz,049000050103,1.50,Beverages,Y,2.49\n1002,Lay's Classic 2.65oz,028400090896,1.60,Candy & Snacks,Y,2.69\n1003,Pepsi 20oz,012000001017,1.50,Beverages,Y,2.49\n";
     const blob = new Blob([csv], { type: "text/csv" });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "koko-pricebook-template.csv"; a.click(); URL.revokeObjectURL(a.href);
   };
