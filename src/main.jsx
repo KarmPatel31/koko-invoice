@@ -1544,7 +1544,7 @@ function InvoicePreview({ invoice, stores = [], activeStore, onClose }) {
                 else if (lpVal > 0) lpColor = "#16a34a";
               }
               return (
-                <div className="shelf-tag" key={i}>
+                <div className={`shelf-tag ${!isMatched ? "not-in-pricebook" : ""}`} key={i}>
                   <div className="tag-header">
                     <span className="tag-brand">KOKO RETAIL</span>
                     <span className="tag-cat">{it.category || "General"}</span>
