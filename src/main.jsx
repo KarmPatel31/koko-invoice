@@ -1161,20 +1161,50 @@ function PriceBooks({ data, save, activeStore, activeStoreId, setActiveStoreId, 
 
   const importCsv = (file) => {
     Papa.parse(file, {
-      header: true, skipEmptyLines: true,
-      complete: ({ data: rows }) => {
+      header: false,
+      skipEmptyLines: true,
+      complete: ({ data: rawRows }) => {
+        if (!rawRows || !rawRows.length) return notify("CSV file was empty.");
+
+        // Check if first row is a header row
+        const firstRow = rawRows[0] || [];
+        const isHeader = firstRow.some(cell => {
+          const s = String(cell).toLowerCase();
+          return s.includes("upc") || s.includes("name") || s.includes("dept") || s.includes("department") || s.includes("retail") || s.includes("price") || s.includes("pos") || s.includes("item");
+        });
+
+        const rows = isHeader ? rawRows.slice(1) : rawRows;
+
         const products = rows.map(r => {
-          const rawPrice = r.Price ?? r.Retail ?? r.SRP ?? r.retail ?? r["POS Price"] ?? r["Pos Price"] ?? r["POS"] ?? r["Selling Price"] ?? r["Retail Price"] ?? r["Store Price"] ?? r.price ?? 0;
+          // Column A (0) = UPC, Column B (1) = Name, Column E (4) = Department, Column G (6) = Retail Price (POS)
+          const upc = String(r[0] ?? "").trim();
+          const name = String(r[1] ?? r[0] ?? "Unnamed item").trim();
+          const department = String(r[4] ?? "Miscellaneous").trim() || "Miscellaneous";
+          
+          // Retail Price: Column G (index 6), fallback to last numeric column if < 7 columns
+          let rawPrice = r[6];
+          if (rawPrice == null || rawPrice === "") {
+            for (let i = r.length - 1; i >= 2; i--) {
+              if (r[i] != null && String(r[i]).replace(/[^0-9.]/g, "") !== "") {
+                rawPrice = r[i];
+                break;
+              }
+            }
+          }
+
+          const retail = Number(String(rawPrice || 0).replace(/[^0-9.]/g, "")) || 0;
+
           return {
-            upc: String(r.UPC ?? r["UPC/PLU"] ?? r.upc ?? r.PLU ?? r.Barcode ?? r.GTIN ?? "").trim(),
-            name: r.Name ?? r.Product ?? r.Description ?? r.name ?? r.item_name ?? "Unnamed item",
-            department: r.Department ?? r.Category ?? r.department ?? "Miscellaneous",
-            retail: Number(String(rawPrice).replace(/[^0-9.]/g, "")) || 0
+            upc,
+            name,
+            department,
+            retail
           };
-        }).filter(x => x.upc || x.name);
+        }).filter(x => (x.upc && x.upc.match(/\d+/)) || (x.name && x.name !== "Unnamed item"));
+
         const stores = data.stores.map(s => s.id === activeStoreId ? { ...s, products } : s);
         save({ ...data, stores });
-        notify(`Imported ${products.length} products to ${activeStore?.name}.`);
+        notify(`Imported ${products.length} products to ${activeStore?.name || "store"}.`);
       }
     });
   };
@@ -1197,7 +1227,7 @@ function PriceBooks({ data, save, activeStore, activeStoreId, setActiveStoreId, 
   };
 
   const downloadSample = () => {
-    const csv = "UPC,Name,Department,Price\n049000050103,Coca-Cola 20oz,Beverages,2.49\n";
+    const csv = "UPC,Name,Cost,Margin,Department,Tax,Retail Price (POS)\n049000050103,Coca-Cola 20oz,1.50,40%,Beverages,Y,2.49\n028400090896,Lay's Classic 2.65oz,1.60,40%,Candy & Snacks,Y,2.69\n012000001017,Pepsi 20oz,1.50,40%,Beverages,Y,2.49\n";
     const blob = new Blob([csv], { type: "text/csv" });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "koko-pricebook-template.csv"; a.click(); URL.revokeObjectURL(a.href);
   };
