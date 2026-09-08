@@ -39,14 +39,68 @@ function normalizeUpc(v = "") {
   return String(v).replace(/\D/g, "").replace(/^0+(?=\d{4,14}$)/, "");
 }
 
+function cleanStr(s = "") {
+  return String(s).toLowerCase().replace(/[^a-z0-9]/g, "").trim();
+}
+
 function matchPriceBook(items, products) {
+  if (!products || !products.length) {
+    return (items || []).map(item => ({
+      ...item,
+      matchedRetail: null,
+      matchedProduct: null,
+      priceDifference: 0
+    }));
+  }
+
   const byUpc = new Map();
+  const byName = new Map();
+
   for (const p of products) {
     const k = normalizeUpc(p.upc);
     if (k) byUpc.set(k, p);
+    const n = cleanStr(p.name);
+    if (n) byName.set(n, p);
   }
+
   return (items || []).map(item => {
-    const p = byUpc.get(normalizeUpc(item.upc));
+    let p = null;
+    const itemUpcClean = normalizeUpc(item.upc);
+
+    // 1. Direct UPC match
+    if (itemUpcClean && byUpc.has(itemUpcClean)) {
+      p = byUpc.get(itemUpcClean);
+    }
+
+    // 2. Substring / Suffix UPC match (handles GTIN-14 vs UPC-A vs EAN-13 differences)
+    if (!p && itemUpcClean.length >= 6) {
+      for (const prod of products) {
+        const prodUpcClean = normalizeUpc(prod.upc);
+        if (prodUpcClean && (prodUpcClean.endsWith(itemUpcClean) || itemUpcClean.endsWith(prodUpcClean) || prodUpcClean.includes(itemUpcClean) || itemUpcClean.includes(prodUpcClean))) {
+          p = prod;
+          break;
+        }
+      }
+    }
+
+    // 3. Product Description / Name match
+    if (!p && (item.description || item.name)) {
+      const itemDescClean = cleanStr(item.description || item.name);
+      if (itemDescClean) {
+        if (byName.has(itemDescClean)) {
+          p = byName.get(itemDescClean);
+        } else {
+          for (const prod of products) {
+            const prodNameClean = cleanStr(prod.name);
+            if (prodNameClean && (itemDescClean.includes(prodNameClean) || prodNameClean.includes(itemDescClean))) {
+              p = prod;
+              break;
+            }
+          }
+        }
+      }
+    }
+
     const matchedRetail = p ? Number(p.retail || 0) : null;
     const invoiceSrp = Number(item.srp || 0);
     const comparisonBase = invoiceSrp || Number(item.unitPrice || 0);
@@ -58,6 +112,7 @@ function matchPriceBook(items, products) {
     };
   });
 }
+
 
 function resizeImageIfNeeded(file, maxDimension = 1600) {
   return new Promise((resolve) => {
@@ -539,7 +594,7 @@ function App() {
       </main>
 
       {toast && <div className="toast">{toast}</div>}
-      {preview && <InvoicePreview invoice={preview} onClose={() => setPreview(null)} />}
+      {preview && <InvoicePreview invoice={preview} stores={data.stores} activeStore={activeStore} onClose={() => setPreview(null)} />}
     </div>
   );
 }
@@ -1035,10 +1090,11 @@ function AIParser({ data, save, activeStore, notify, setPreview, apiKey, setPage
             <table>
               <thead><tr><th>UPC</th><th>Description</th><th>Category</th><th>Cost</th><th>POS</th><th>Diff</th></tr></thead>
               <tbody>{(parsed.items || []).map((item, i) => {
+                const isMatched = item.matchedRetail != null;
                 const diff = Number(item.priceDifference || 0);
-                return <tr key={i}>
+                return <tr key={i} className={!isMatched ? "not-in-pricebook" : ""}>
                   <td className="mono">{item.upc || "—"}</td><td><b>{item.description || "Unknown"}</b></td><td>{item.category || "Misc"}</td>
-                  <td>{money(item.unitPrice)}</td><td>{item.matchedRetail == null ? "—" : money(item.matchedRetail)}</td>
+                  <td>{money(item.unitPrice)}</td><td>{isMatched ? money(item.matchedRetail) : <span className="unmatched-badge">Not in Price Book</span>}</td>
                   <td className={diff > 0 ? "negative" : diff < 0 ? "positive" : ""}>{diff === 0 ? "—" : `${diff > 0 ? "+" : ""}${money(diff)}`}</td>
                 </tr>
               })}</tbody>
@@ -1107,12 +1163,15 @@ function PriceBooks({ data, save, activeStore, activeStoreId, setActiveStoreId, 
     Papa.parse(file, {
       header: true, skipEmptyLines: true,
       complete: ({ data: rows }) => {
-        const products = rows.map(r => ({
-          upc: String(r.UPC ?? r["UPC/PLU"] ?? r.upc ?? r.PLU ?? "").trim(),
-          name: r.Name ?? r.Product ?? r.Description ?? r.name ?? "Unnamed item",
-          department: r.Department ?? r.Category ?? r.department ?? "Miscellaneous",
-          retail: Number(r.Price ?? r.Retail ?? r.SRP ?? r.retail ?? 0)
-        })).filter(x => x.upc || x.name);
+        const products = rows.map(r => {
+          const rawPrice = r.Price ?? r.Retail ?? r.SRP ?? r.retail ?? r["POS Price"] ?? r["Pos Price"] ?? r["POS"] ?? r["Selling Price"] ?? r["Retail Price"] ?? r["Store Price"] ?? r.price ?? 0;
+          return {
+            upc: String(r.UPC ?? r["UPC/PLU"] ?? r.upc ?? r.PLU ?? r.Barcode ?? r.GTIN ?? "").trim(),
+            name: r.Name ?? r.Product ?? r.Description ?? r.name ?? r.item_name ?? "Unnamed item",
+            department: r.Department ?? r.Category ?? r.department ?? "Miscellaneous",
+            retail: Number(String(rawPrice).replace(/[^0-9.]/g, "")) || 0
+          };
+        }).filter(x => x.upc || x.name);
         const stores = data.stores.map(s => s.id === activeStoreId ? { ...s, products } : s);
         save({ ...data, stores });
         notify(`Imported ${products.length} products to ${activeStore?.name}.`);
@@ -1366,48 +1425,55 @@ function BarcodeGtin14({ upc }) {
   );
 }
 
-function InvoicePreview({ invoice, onClose }) {
+function InvoicePreview({ invoice, stores = [], activeStore, onClose }) {
   const detail = invoice.detail || {};
+  const storeId = invoice.storeId || activeStore?.id;
+  const targetStore = (stores || []).find(s => s.id === storeId) || activeStore || (stores || [])[0];
+  const storeProducts = targetStore?.products || [];
+  const items = matchPriceBook(detail.items || [], storeProducts);
+
   return <div className="modal-backdrop">
     <div className="preview-modal">
       <div className="preview-toolbar"><div><b>Koko Invoice Preview</b><span>{invoice.id}</span></div><div><button className="ghost" onClick={() => window.print()}><Printer size={16} /> Print / PDF</button><button className="icon-btn" onClick={onClose}><X size={18} /></button></div></div>
       <div className="print-sheet">
         <div className="invoice-head"><div><div className="brand-mark large">K</div><h2>Koko Invoice</h2></div><div><span>INVOICE</span><strong>{invoice.id}</strong></div></div>
         <div className="invoice-meta"><div><small>VENDOR</small><b>{invoice.vendor}</b></div><div><small>DATE</small><b>{invoice.date}</b></div><div><small>STATUS</small><b>{invoice.status}</b></div><div><small>TOTAL</small><b>{money(invoice.total)}</b></div></div>
-        {detail.items?.length ? <table className="print-table"><thead><tr><th>UPC</th><th>Description</th><th>Qty</th><th>SRP</th><th>POS</th><th>L/P</th></tr></thead><tbody>{detail.items.map((it, i) => {
+        {items.length ? <table className="print-table"><thead><tr><th>UPC</th><th>Description</th><th>Qty</th><th>SRP</th><th>POS</th><th>L/P</th></tr></thead><tbody>{items.map((it, i) => {
           const srpVal = Number(it.srp || (it.unitPrice ? (it.unitPrice / 0.8) : 0));
-          const posVal = it.matchedRetail != null ? Number(it.matchedRetail) : null;
+          const isMatched = it.matchedRetail != null;
+          const posVal = isMatched ? Number(it.matchedRetail) : null;
           const lpVal = posVal == null ? null : Number((posVal - srpVal).toFixed(2));
           let lpColor = "#000000";
           if (lpVal !== null && lpVal !== 0) {
             if (lpVal < 0) lpColor = "#dc2626";
             else if (lpVal > 0) lpColor = "#16a34a";
           }
-          return <tr key={i}>
+          return <tr key={i} className={!isMatched ? "not-in-pricebook" : ""}>
             <td>{it.upc || "—"}</td>
             <td>{it.description}</td>
             <td>{it.quantity || 1}</td>
             <td>{money(srpVal)}</td>
-            <td>{posVal == null ? "—" : money(posVal)}</td>
+            <td>{isMatched ? money(posVal) : <span style={{ color: "#a16207", fontWeight: 600, fontSize: "11px" }}>Not in Price Book</span>}</td>
             <td style={{ color: lpColor, fontWeight: lpVal !== 0 ? 600 : 400 }}>{lpVal == null ? "—" : money(lpVal)}</td>
           </tr>;
         })}</tbody></table> : <div className="empty small">Detailed line items were not stored for this sample invoice.</div>}
         <div className="invoice-total"><span>Invoice Total</span><strong>{money(invoice.total)}</strong></div>
       </div>
 
-      {detail.items?.length ? (
+      {items.length ? (
         <div className="print-sheet page-break">
           <div className="tags-header">
             <div>
               <h2>Price Cards</h2>
-              <span>Generated from Invoice {invoice.id} ({detail.items.length} items)</span>
+              <span>Generated from Invoice {invoice.id} ({items.length} items)</span>
             </div>
             <div className="brand-mark">K</div>
           </div>
           <div className="tags-grid">
-            {detail.items.map((it, i) => {
+            {items.map((it, i) => {
               const srpVal = Number(it.srp || (it.unitPrice ? (it.unitPrice / 0.8) : 0));
-              const posVal = it.matchedRetail != null ? Number(it.matchedRetail) : null;
+              const isMatched = it.matchedRetail != null;
+              const posVal = isMatched ? Number(it.matchedRetail) : null;
               const lpVal = posVal == null ? null : Number((posVal - srpVal).toFixed(2));
               let lpColor = "#000000";
               if (lpVal !== null && lpVal !== 0) {
@@ -1425,7 +1491,7 @@ function InvoicePreview({ invoice, onClose }) {
                   <div className="tag-prices">
                     <div className="tag-price-block">
                       <small>POS</small>
-                      <strong>{posVal == null ? "—" : money(posVal)}</strong>
+                      <strong>{isMatched ? money(posVal) : "—"}</strong>
                     </div>
                     <div className="tag-price-block">
                       <small>SRP</small>
