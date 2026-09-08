@@ -354,15 +354,15 @@ const seed = {
   ],
   invoices: [
     {
-      id: "INV-1048", vendor: "Core-Mark", date: "2026-09-01", total: 1847.23, status: "Pending", storeId: "s101", items: 4,
+      id: "INV-1048", vendor: "Core-Mark", date: "2026-09-01", total: 1847.23, status: "Working", storeId: "s101", items: 4,
       detail: { invoiceNumber: "INV-1048", vendor: "Core-Mark", invoiceDate: "2026-09-01", total: 1847.23, items: sampleSeedItems }
     },
     {
-      id: "INV-1047", vendor: "McLane", date: "2026-08-30", total: 963.55, status: "Paid", storeId: "s101", items: 4,
+      id: "INV-1047", vendor: "McLane", date: "2026-08-30", total: 963.55, status: "Done", storeId: "s101", items: 4,
       detail: { invoiceNumber: "INV-1047", vendor: "McLane", invoiceDate: "2026-08-30", total: 963.55, items: sampleSeedItems }
     },
     {
-      id: "INV-1046", vendor: "Great Lakes Beverage", date: "2026-08-28", total: 2211.08, status: "Paid", storeId: "s102", items: 4,
+      id: "INV-1046", vendor: "Great Lakes Beverage", date: "2026-08-28", total: 2211.08, status: "Done", storeId: "s102", items: 4,
       detail: { invoiceNumber: "INV-1046", vendor: "Great Lakes Beverage", invoiceDate: "2026-08-28", total: 2211.08, items: sampleSeedItems }
     }
   ],
@@ -837,7 +837,7 @@ function SettingsView({ user, apiKey, saveApiKey, notify, handleLogout }) {
 function Dashboard({ data, activeStore, save, setPage }) {
   const products = activeStore?.products?.length || 0;
   const invoiceTotal = data.invoices.reduce((a, b) => a + Number(b.total || 0), 0);
-  const pending = data.invoices.filter(x => x.status === "Pending").length;
+  const pending = data.invoices.filter(x => x.status === "Working" || x.status === "Pending").length;
   const done = data.tasks.filter(t => t.done).length;
   const progress = data.tasks.length ? Math.round(done / data.tasks.length * 100) : 0;
   const chart = [
@@ -1016,7 +1016,7 @@ function AIParser({ data, save, activeStore, notify, setPreview, apiKey, setPage
       vendor: parsed.vendor || "Unknown Vendor",
       date: parsed.invoiceDate || new Date().toISOString().slice(0, 10),
       total: Number(parsed.total || 0),
-      status: "Pending",
+      status: "Working",
       storeId: activeStore?.id,
       items: parsed.items?.length || 0,
       detail: parsed
@@ -1368,7 +1368,7 @@ function Invoices({ data, save, setPreview }) {
 
   return <div className="panel">
     <div className="panel-title"><div><h3>Invoice Ledger</h3><p>Track vendor invoices and review payment status.</p></div>
-      <div className="segmented">{["All", "Paid", "Pending", "Draft"].map(x => <button className={filter === x ? "active" : ""} onClick={() => setFilter(x)} key={x}>{x}</button>)}</div>
+      <div className="segmented">{["All", "Working", "Done"].map(x => <button className={filter === x ? "active" : ""} onClick={() => setFilter(x)} key={x}>{x}</button>)}</div>
     </div>
     <InvoiceTable invoices={rows} onOpen={setPreview} onStatus={setStatus} />
   </div>;
@@ -1379,7 +1379,7 @@ function InvoiceTable({ invoices, compact, onOpen, onStatus }) {
     <thead><tr><th>Invoice</th><th>Vendor</th><th>Date</th><th>Items</th><th>Status</th><th>Total</th>{!compact && <th />}</tr></thead>
     <tbody>{invoices.map(inv => <tr key={inv.id}>
       <td><b className="purple">{inv.id}</b></td><td><b>{inv.vendor}</b></td><td>{inv.date}</td><td>{inv.items || 0}</td>
-      <td>{onStatus ? <select className={`status ${inv.status.toLowerCase()}`} value={inv.status} onChange={e => onStatus(inv.id, e.target.value)}><option>Paid</option><option>Pending</option><option>Draft</option></select> : <span className={`status ${inv.status.toLowerCase()}`}>{inv.status}</span>}</td>
+      <td>{onStatus ? <select className={`status ${inv.status.toLowerCase()}`} value={inv.status} onChange={e => onStatus(inv.id, e.target.value)}><option>Working</option><option>Done</option></select> : <span className={`status ${inv.status.toLowerCase()}`}>{inv.status}</span>}</td>
       <td><b>{money(inv.total)}</b></td>
       {!compact && <td><button className="icon-btn" onClick={() => onOpen(inv)}><MoreHorizontal size={18} /></button></td>}
     </tr>)}</tbody>
