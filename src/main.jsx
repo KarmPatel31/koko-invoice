@@ -104,8 +104,14 @@ function matchPriceBook(items, products) {
     const matchedRetail = p ? Number(p.retail || 0) : null;
     const invoiceSrp = Number(item.srp || 0);
     const comparisonBase = invoiceSrp || Number(item.unitPrice || 0);
+
+    // Existing price book products keep their price book department; AI determines department for new products only
+    const department = (p && p.department) ? p.department : (item.category || item.department || "Miscellaneous");
+
     return {
       ...item,
+      category: department,
+      department: department,
       matchedRetail,
       matchedProduct: p?.name || null,
       priceDifference: matchedRetail == null ? 0 : Number((comparisonBase - matchedRetail).toFixed(2))
@@ -225,9 +231,7 @@ Return monetary fields as numbers with no currency symbols.
 For UPCs, return digits only when a UPC is visible; otherwise return an empty string.
 "unitPrice" means the vendor invoice unit COST for one sellable/invoiced unit, not the extended total.
 "srp" means suggested retail price printed on the invoice. If no SRP is present, use 20% margin on the product.
-Choose practical convenience-store categories such as Beverages, Candy & Snacks, Cigarettes, Cigarillos, Snuff,
-Beer, Wine, Grocery, Dairy & Ice Cream, Frozen Food, Household Supplies, Medicine, Smoke Shop, Automobile,
-Pet Foods, Fishing, Ice Bags, Pipe Tobacco Bag & Tubes, or Miscellaneous.
+Analyze product descriptions to assign an accurate retail department category (especially for new products), such as Beverages, Candy & Snacks, Cigarettes, Cigarillos, Snuff, Beer, Wine, Grocery, Dairy & Ice Cream, Frozen Food, Household Supplies, Medicine, Smoke Shop, Automobile, Pet Foods, Fishing, Ice Bags, Pipe Tobacco Bag & Tubes, or Miscellaneous.
 If a date can be identified, normalize it to YYYY-MM-DD.
 Be conservative: never invent a UPC, price, invoice number, or vendor name.
 Return JSON matching this exact structure:
