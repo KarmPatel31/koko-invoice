@@ -1479,9 +1479,25 @@ function InvoicePreview({ invoice, stores = [], activeStore, onClose }) {
   const storeProducts = targetStore?.products || [];
   const items = matchPriceBook(detail.items || [], storeProducts);
 
+  const vendorName = invoice?.vendor ? invoice.vendor.trim() : "Unknown Vendor";
+  const formattedTitle = `Koko Invoice - ${vendorName}`;
+
+  useEffect(() => {
+    const originalTitle = document.title;
+    document.title = formattedTitle;
+    return () => {
+      document.title = originalTitle;
+    };
+  }, [formattedTitle]);
+
+  const handlePrint = () => {
+    document.title = formattedTitle;
+    window.print();
+  };
+
   return <div className="modal-backdrop">
     <div className="preview-modal">
-      <div className="preview-toolbar"><div><b>Koko Invoice Preview</b><span>{invoice.id}</span></div><div><button className="ghost" onClick={() => window.print()}><Printer size={16} /> Print / PDF</button><button className="icon-btn" onClick={onClose}><X size={18} /></button></div></div>
+      <div className="preview-toolbar"><div><b>Koko Invoice Preview</b><span>{invoice.id}</span></div><div><button className="ghost" onClick={handlePrint}><Printer size={16} /> Print / Save PDF</button><button className="icon-btn" onClick={onClose}><X size={18} /></button></div></div>
       <div className="print-sheet">
         <div className="invoice-head"><div><img src="/logo.png" alt="Koko Logo" style={{ width: 44, height: 44, objectFit: "contain", borderRadius: 8 }} /><h2>Koko Invoice</h2></div><div><span>INVOICE</span><strong>{invoice.id}</strong></div></div>
         <div className="invoice-meta"><div><small>VENDOR</small><b>{invoice.vendor}</b></div><div><small>DATE</small><b>{invoice.date}</b></div><div><small>STATUS</small><b>{invoice.status}</b></div><div><small>TOTAL</small><b>{money(invoice.total)}</b></div></div>
