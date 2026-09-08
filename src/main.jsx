@@ -330,6 +330,13 @@ async function testGeminiApiKeyDirect(apiKey) {
   throw lastError || new Error("API key test failed.");
 }
 
+const sampleSeedItems = [
+  { upc: "049000050103", description: "Coca-Cola 20oz Bottle 24ct", category: "Beverages", quantity: 2, unitPrice: 1.85, srp: 2.49, lineTotal: 44.40 },
+  { upc: "028400090896", description: "Lay's Classic Potato Chips 2.65oz", category: "Candy & Snacks", quantity: 1, unitPrice: 1.95, srp: 2.69, lineTotal: 23.40 },
+  { upc: "012000001017", description: "Pepsi Wild Cherry 20oz", category: "Beverages", quantity: 1, unitPrice: 1.85, srp: 2.49, lineTotal: 22.20 },
+  { upc: "034000004400", description: "Hershey's Milk Chocolate Bar 1.55oz", category: "Candy & Snacks", quantity: 3, unitPrice: 1.15, srp: 1.69, lineTotal: 41.40 }
+];
+
 const seed = {
   stores: [
     {
@@ -342,9 +349,18 @@ const seed = {
     { id: "s102", name: "Store #102", location: "Lake Avenue", products: [] }
   ],
   invoices: [
-    { id: "INV-1048", vendor: "Core-Mark", date: "2026-09-01", total: 1847.23, status: "Pending", storeId: "s101", items: 46 },
-    { id: "INV-1047", vendor: "McLane", date: "2026-08-30", total: 963.55, status: "Paid", storeId: "s101", items: 31 },
-    { id: "INV-1046", vendor: "Great Lakes Beverage", date: "2026-08-28", total: 2211.08, status: "Paid", storeId: "s102", items: 18 }
+    {
+      id: "INV-1048", vendor: "Core-Mark", date: "2026-09-01", total: 1847.23, status: "Pending", storeId: "s101", items: 4,
+      detail: { invoiceNumber: "INV-1048", vendor: "Core-Mark", invoiceDate: "2026-09-01", total: 1847.23, items: sampleSeedItems }
+    },
+    {
+      id: "INV-1047", vendor: "McLane", date: "2026-08-30", total: 963.55, status: "Paid", storeId: "s101", items: 4,
+      detail: { invoiceNumber: "INV-1047", vendor: "McLane", invoiceDate: "2026-08-30", total: 963.55, items: sampleSeedItems }
+    },
+    {
+      id: "INV-1046", vendor: "Great Lakes Beverage", date: "2026-08-28", total: 2211.08, status: "Paid", storeId: "s102", items: 4,
+      detail: { invoiceNumber: "INV-1046", vendor: "Great Lakes Beverage", invoiceDate: "2026-08-28", total: 2211.08, items: sampleSeedItems }
+    }
   ],
   quotes: [
     { id: "Q-204", client: "Store #101", vendor: "ABC Fixtures", amount: 1250, status: "Open", date: "2026-09-02" }
