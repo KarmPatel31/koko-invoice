@@ -933,6 +933,39 @@ function AIParser({ data, save, activeStore, notify, setPreview, apiKey, setPage
     });
   };
 
+  useEffect(() => {
+    const handlePaste = (e) => {
+      const clipboardItems = e.clipboardData?.items || [];
+      const imageFiles = [];
+
+      for (const item of clipboardItems) {
+        if (item.type && item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          if (file) {
+            const ext = item.type.split("/")[1] || "png";
+            const pastedFile = new File(
+              [file],
+              `Pasted Invoice Image ${files.length + imageFiles.length + 1}.${ext}`,
+              { type: item.type, lastModified: Date.now() }
+            );
+            imageFiles.push(pastedFile);
+          }
+        }
+      }
+
+      if (imageFiles.length > 0) {
+        e.preventDefault();
+        handleAddFiles(imageFiles);
+        notify(`Pasted ${imageFiles.length} image(s) from clipboard.`);
+      }
+    };
+
+    window.addEventListener("paste", handlePaste);
+    return () => {
+      window.removeEventListener("paste", handlePaste);
+    };
+  }, [files.length, notify]);
+
   const removeFile = (index, e) => {
     e.stopPropagation();
     setFiles(prev => prev.filter((_, i) => i !== index));
@@ -1049,8 +1082,8 @@ function AIParser({ data, save, activeStore, notify, setPreview, apiKey, setPage
         {!files.length ? (
           <>
             <h3>Drop invoice page(s) or photos here</h3>
-            <p>PDF, PNG, JPG or WEBP (multiple files allowed)</p>
-            <button className="secondary" type="button">Browse files</button>
+            <p>PDF, PNG, JPG, WEBP or Paste Image from Clipboard (Cmd+V / Ctrl+V)</p>
+            <button className="secondary" type="button">Browse files or Paste</button>
           </>
         ) : (
           <>
