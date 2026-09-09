@@ -224,29 +224,81 @@ export async function deleteStoreDoc(storeId) {
   }
 }
 
+export function cleanForFirestore(obj) {
+  if (obj === undefined) return null;
+  if (obj === null || typeof obj !== "object") return obj;
+  if (Array.isArray(obj)) {
+    return obj.map(cleanForFirestore);
+  }
+  const cleaned = {};
+  for (const key of Object.keys(obj)) {
+    const val = obj[key];
+    if (val !== undefined) {
+      cleaned[key] = cleanForFirestore(val);
+    }
+  }
+  return cleaned;
+}
+
 // Invoices CRUD
 export async function saveInvoiceDoc(invoice) {
-  await setDoc(doc(db, "invoices", invoice.id), invoice);
+  if (!invoice || !invoice.id) return;
+  try {
+    const safeId = String(invoice.id).replace(/[/]/g, "-").trim();
+    const cleanInv = cleanForFirestore({ ...invoice, id: safeId });
+    await setDoc(doc(db, "invoices", safeId), cleanInv);
+  } catch (err) {
+    console.error("saveInvoiceDoc error:", err);
+  }
 }
 
 export async function deleteInvoiceDoc(invoiceId) {
-  await deleteDoc(doc(db, "invoices", invoiceId));
+  if (!invoiceId) return;
+  try {
+    const safeId = String(invoiceId).replace(/[/]/g, "-").trim();
+    await deleteDoc(doc(db, "invoices", safeId));
+  } catch (err) {
+    console.error("deleteInvoiceDoc error:", err);
+  }
 }
 
 // Quotes CRUD
 export async function saveQuoteDoc(quote) {
-  await setDoc(doc(db, "quotes", quote.id), quote);
+  if (!quote || !quote.id) return;
+  try {
+    const cleanQuote = cleanForFirestore(quote);
+    await setDoc(doc(db, "quotes", quote.id), cleanQuote);
+  } catch (err) {
+    console.error("saveQuoteDoc error:", err);
+  }
 }
 
 export async function deleteQuoteDoc(quoteId) {
-  await deleteDoc(doc(db, "quotes", quoteId));
+  if (!quoteId) return;
+  try {
+    await deleteDoc(doc(db, "quotes", quoteId));
+  } catch (err) {
+    console.error("deleteQuoteDoc error:", err);
+  }
 }
 
 // Tasks CRUD
 export async function saveTaskDoc(task) {
-  await setDoc(doc(db, "tasks", task.id), task);
+  if (!task || !task.id) return;
+  try {
+    const cleanTask = cleanForFirestore(task);
+    await setDoc(doc(db, "tasks", task.id), cleanTask);
+  } catch (err) {
+    console.error("saveTaskDoc error:", err);
+  }
 }
 
 export async function deleteTaskDoc(taskId) {
-  await deleteDoc(doc(db, "tasks", taskId));
+  if (!taskId) return;
+  try {
+    await deleteDoc(doc(db, "tasks", taskId));
+  } catch (err) {
+    console.error("deleteTaskDoc error:", err);
+  }
 }
+

@@ -444,12 +444,48 @@ function App() {
               missingInCloud.forEach(s => saveStoreDoc(s));
             }
           }
-          return {
+
+          let mergedInvoices = cloudData.invoices || [];
+          if (prev.invoices && prev.invoices.length) {
+            const missingInCloud = prev.invoices.filter(pi => !mergedInvoices.some(ci => ci.id === pi.id));
+            if (missingInCloud.length) {
+              mergedInvoices = [...mergedInvoices, ...missingInCloud];
+              missingInCloud.forEach(inv => saveInvoiceDoc(inv));
+            }
+          }
+
+          let mergedQuotes = cloudData.quotes || [];
+          if (prev.quotes && prev.quotes.length) {
+            const missingInCloud = prev.quotes.filter(pq => !mergedQuotes.some(cq => cq.id === pq.id));
+            if (missingInCloud.length) {
+              mergedQuotes = [...mergedQuotes, ...missingInCloud];
+              missingInCloud.forEach(q => saveQuoteDoc(q));
+            }
+          }
+
+          let mergedTasks = cloudData.tasks || [];
+          if (prev.tasks && prev.tasks.length) {
+            const missingInCloud = prev.tasks.filter(pt => !mergedTasks.some(ct => ct.id === pt.id));
+            if (missingInCloud.length) {
+              mergedTasks = [...mergedTasks, ...missingInCloud];
+              missingInCloud.forEach(t => saveTaskDoc(t));
+            }
+          }
+
+          const nextData = {
             stores: mergedStores.length ? mergedStores : prev.stores,
-            invoices: cloudData.invoices?.length ? cloudData.invoices : prev.invoices,
-            quotes: cloudData.quotes?.length ? cloudData.quotes : prev.quotes,
-            tasks: cloudData.tasks?.length ? cloudData.tasks : prev.tasks
+            invoices: mergedInvoices,
+            quotes: mergedQuotes,
+            tasks: mergedTasks
           };
+
+          try {
+            localStorage.setItem("koko-invoice-data", JSON.stringify(nextData));
+          } catch (e) {
+            console.error("localStorage save error:", e);
+          }
+
+          return nextData;
         });
       });
     }).catch(err => {
@@ -1056,8 +1092,10 @@ function AIParser({ data, save, activeStore, notify, setPreview, apiKey, setPage
 
   const saveInvoice = () => {
     if (!parsed) return;
+    const rawId = (parsed.invoiceNumber || `INV-${Date.now().toString().slice(-5)}`).trim();
+    const safeId = rawId.replace(/[/]/g, "-");
     const inv = {
-      id: parsed.invoiceNumber || `INV-${Date.now().toString().slice(-5)}`,
+      id: safeId,
       vendor: parsed.vendor || "Unknown Vendor",
       date: parsed.invoiceDate || new Date().toISOString().slice(0, 10),
       total: Number(parsed.total || 0),
@@ -1066,7 +1104,7 @@ function AIParser({ data, save, activeStore, notify, setPreview, apiKey, setPage
       items: parsed.items?.length || 0,
       detail: parsed
     };
-    save({ ...data, invoices: [inv, ...data.invoices] });
+    save({ ...data, invoices: [inv, ...data.invoices.filter(i => i.id !== inv.id)] });
     notify("Invoice saved to ledger.");
     setPreview(inv);
   };
