@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import Papa from "papaparse";
+import html2pdf from "html2pdf.js";
 import {
   LayoutDashboard, Store, ReceiptText, FileText, CheckSquare, UploadCloud,
   Search, Plus, Trash2, Download, Printer, ChevronDown, Sparkles, X,
@@ -1529,6 +1530,8 @@ function InvoicePreview({ invoice, stores = [], activeStore, onClose }) {
 
   const vendorName = invoice?.vendor ? invoice.vendor.trim() : "Unknown Vendor";
   const formattedTitle = `Koko Invoice - ${vendorName}`;
+  const printContainerRef = useRef(null);
+  const [isSharing, setIsSharing] = useState(false);
 
   useEffect(() => {
     const originalTitle = document.title;
@@ -1553,25 +1556,65 @@ function InvoicePreview({ invoice, stores = [], activeStore, onClose }) {
       `• *Items:* ${items.length} product(s)\n\n` +
       `Sent via Koko Invoice System`;
 
-    const whatsappUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(shareText)}`;
+    setIsSharing(true);
 
-    if (navigator.share && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
-      try {
-        await navigator.share({
-          title: formattedTitle,
-          text: shareText,
-        });
-        return;
-      } catch (err) {
-        if (err.name !== "AbortError") {
-          console.log("Fallback to WhatsApp URL:", err);
-        } else {
+    try {
+      const fileName = `${formattedTitle}.pdf`;
+      let pdfFile = null;
+
+      if (printContainerRef.current) {
+        const opt = {
+          margin: [8, 8, 8, 8],
+          filename: fileName,
+          image: { type: "jpeg", quality: 0.98 },
+          html2canvas: { scale: 2, useCORS: true, logging: false },
+          jsPDF: { unit: "mm", format: "a4", orientation: "portrait" }
+        };
+        const pdfBlob = await html2pdf().set(opt).from(printContainerRef.current).output("blob");
+        pdfFile = new File([pdfBlob], fileName, { type: "application/pdf" });
+      }
+
+      // 1. Try native Web Share API with attached PDF file (Mobile / Safari)
+      if (pdfFile && navigator.share && navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
+        try {
+          await navigator.share({
+            title: formattedTitle,
+            text: shareText,
+            files: [pdfFile]
+          });
+          setIsSharing(false);
           return;
+        } catch (err) {
+          if (err.name === "AbortError") {
+            setIsSharing(false);
+            return;
+          }
+          console.log("File share cancelled or unsupported, falling back to download...", err);
         }
       }
-    }
 
-    window.open(whatsappUrl, "_blank", "noopener,noreferrer");
+      // 2. Desktop / WhatsApp Web Fallback: Download PDF + Open WhatsApp Web with text
+      if (pdfFile) {
+        const blobUrl = URL.createObjectURL(pdfFile);
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+      }
+
+      const whatsappUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(shareText + "\n\n(📄 PDF Invoice downloaded to your device)")}`;
+      window.open(whatsappUrl, "_blank", "noopener,noreferrer");
+
+    } catch (err) {
+      console.error("Error generating PDF for share:", err);
+      const whatsappUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(shareText)}`;
+      window.open(whatsappUrl, "_blank", "noopener,noreferrer");
+    } finally {
+      setIsSharing(false);
+    }
   };
 
   return <div className="modal-backdrop">
@@ -1579,88 +1622,92 @@ function InvoicePreview({ invoice, stores = [], activeStore, onClose }) {
       <div className="preview-toolbar">
         <div><b>Koko Invoice Preview</b><span>{invoice.id}</span></div>
         <div>
-          <button className="secondary" onClick={handleShareWhatsApp} style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
-            <Share2 size={16} style={{ color: "#25D366" }} /> Share to WhatsApp
+          <button className="secondary" onClick={handleShareWhatsApp} disabled={isSharing} style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+            {isSharing ? <Loader2 size={16} className="spin" /> : <Share2 size={16} style={{ color: "#25D366" }} />}
+            {isSharing ? "Generating PDF..." : "Share to WhatsApp"}
           </button>
           <button className="ghost" onClick={handlePrint}><Printer size={16} /> Print / Save PDF</button>
           <button className="icon-btn" onClick={onClose}><X size={18} /></button>
         </div>
       </div>
-      <div className="print-sheet">
-        <div className="invoice-head"><div><img src="/logo.png" alt="Koko Logo" style={{ width: 44, height: 44, objectFit: "contain", borderRadius: 8 }} /><h2>Koko Invoice</h2></div><div><span>INVOICE</span><strong>{invoice.id}</strong></div></div>
-        <div className="invoice-meta"><div><small>VENDOR</small><b>{invoice.vendor}</b></div><div><small>DATE</small><b>{invoice.date}</b></div><div><small>STORE</small><b>{targetStore?.name || "Store"}</b></div><div><small>TOTAL</small><b>{money(invoice.total)}</b></div></div>
-        {items.length ? <table className="print-table"><thead><tr><th>UPC</th><th>Description</th><th>Qty</th><th>SRP</th><th>POS</th><th>L/P</th></tr></thead><tbody>{items.map((it, i) => {
-          const srpVal = Number(it.srp || (it.unitPrice ? (it.unitPrice / 0.8) : 0));
-          const isMatched = it.matchedRetail != null;
-          const posVal = isMatched ? Number(it.matchedRetail) : null;
-          const lpVal = posVal == null ? null : Number((posVal - srpVal).toFixed(2));
-          let lpColor = "#000000";
-          if (lpVal !== null && lpVal !== 0) {
-            if (lpVal < 0) lpColor = "#dc2626";
-            else if (lpVal > 0) lpColor = "#16a34a";
-          }
-          return <tr key={i} className={!isMatched ? "not-in-pricebook" : ""}>
-            <td>{it.upc || "—"}</td>
-            <td>{it.description}</td>
-            <td>{it.quantity || 1}</td>
-            <td>{money(srpVal)}</td>
-            <td>{isMatched ? money(posVal) : <span style={{ color: "#a16207", fontWeight: 600, fontSize: "11px" }}>Not in Price Book</span>}</td>
-            <td style={{ color: lpColor, fontWeight: lpVal !== 0 ? 600 : 400 }}>{lpVal == null ? "—" : money(lpVal)}</td>
-          </tr>;
-        })}</tbody></table> : <div className="empty small">Detailed line items were not stored for this sample invoice.</div>}
-        <div className="invoice-total"><span>Invoice Total</span><strong>{money(invoice.total)}</strong></div>
-      </div>
 
-      {items.length ? (
-        <div className="print-sheet page-break">
-          <div className="tags-header">
-            <div>
-              <h2>Price Cards</h2>
-              <span>Generated from Invoice {invoice.id} ({items.length} items)</span>
-            </div>
-            <img src="/logo.png" alt="Koko Logo" style={{ width: 36, height: 36, objectFit: "contain", borderRadius: 6 }} />
-          </div>
-          <div className="tags-grid">
-            {items.map((it, i) => {
-              const srpVal = Number(it.srp || (it.unitPrice ? (it.unitPrice / 0.8) : 0));
-              const isMatched = it.matchedRetail != null;
-              const posVal = isMatched ? Number(it.matchedRetail) : null;
-              const lpVal = posVal == null ? null : Number((posVal - srpVal).toFixed(2));
-              let lpColor = "#000000";
-              if (lpVal !== null && lpVal !== 0) {
-                if (lpVal < 0) lpColor = "#dc2626";
-                else if (lpVal > 0) lpColor = "#16a34a";
-              }
-              return (
-                <div className={`shelf-tag ${!isMatched ? "not-in-pricebook" : ""}`} key={i}>
-                  <div className="tag-header">
-                    <span className="tag-brand">KOKO RETAIL</span>
-                    <span className="tag-cat">{it.category || "General"}</span>
-                  </div>
-                  <div className="tag-title">{it.description || "Unnamed Item"}</div>
-                  <BarcodeGtin14 upc={it.upc} />
-                  <div className="tag-prices">
-                    <div className="tag-price-block">
-                      <small>POS</small>
-                      <strong>{isMatched ? money(posVal) : "—"}</strong>
-                    </div>
-                    <div className="tag-price-block">
-                      <small>SRP</small>
-                      <span>{money(srpVal)}</span>
-                    </div>
-                    <div className="tag-price-block">
-                      <small>L/P</small>
-                      <span style={{ color: lpColor, fontWeight: 700 }}>
-                        {lpVal == null ? "—" : money(lpVal)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+      <div ref={printContainerRef}>
+        <div className="print-sheet">
+          <div className="invoice-head"><div><img src="/logo.png" alt="Koko Logo" style={{ width: 44, height: 44, objectFit: "contain", borderRadius: 8 }} /><h2>Koko Invoice</h2></div><div><span>INVOICE</span><strong>{invoice.id}</strong></div></div>
+          <div className="invoice-meta"><div><small>VENDOR</small><b>{invoice.vendor}</b></div><div><small>DATE</small><b>{invoice.date}</b></div><div><small>STORE</small><b>{targetStore?.name || "Store"}</b></div><div><small>TOTAL</small><b>{money(invoice.total)}</b></div></div>
+          {items.length ? <table className="print-table"><thead><tr><th>UPC</th><th>Description</th><th>Qty</th><th>SRP</th><th>POS</th><th>L/P</th></tr></thead><tbody>{items.map((it, i) => {
+            const srpVal = Number(it.srp || (it.unitPrice ? (it.unitPrice / 0.8) : 0));
+            const isMatched = it.matchedRetail != null;
+            const posVal = isMatched ? Number(it.matchedRetail) : null;
+            const lpVal = posVal == null ? null : Number((posVal - srpVal).toFixed(2));
+            let lpColor = "#000000";
+            if (lpVal !== null && lpVal !== 0) {
+              if (lpVal < 0) lpColor = "#dc2626";
+              else if (lpVal > 0) lpColor = "#16a34a";
+            }
+            return <tr key={i} className={!isMatched ? "not-in-pricebook" : ""}>
+              <td>{it.upc || "—"}</td>
+              <td>{it.description}</td>
+              <td>{it.quantity || 1}</td>
+              <td>{money(srpVal)}</td>
+              <td>{isMatched ? money(posVal) : <span style={{ color: "#a16207", fontWeight: 600, fontSize: "11px" }}>Not in Price Book</span>}</td>
+              <td style={{ color: lpColor, fontWeight: lpVal !== 0 ? 600 : 400 }}>{lpVal == null ? "—" : money(lpVal)}</td>
+            </tr>;
+          })}</tbody></table> : <div className="empty small">Detailed line items were not stored for this sample invoice.</div>}
+          <div className="invoice-total"><span>Invoice Total</span><strong>{money(invoice.total)}</strong></div>
         </div>
-      ) : null}
+
+        {items.length ? (
+          <div className="print-sheet page-break">
+            <div className="tags-header">
+              <div>
+                <h2>Price Cards</h2>
+                <span>Generated from Invoice {invoice.id} ({items.length} items)</span>
+              </div>
+              <img src="/logo.png" alt="Koko Logo" style={{ width: 36, height: 36, objectFit: "contain", borderRadius: 6 }} />
+            </div>
+            <div className="tags-grid">
+              {items.map((it, i) => {
+                const srpVal = Number(it.srp || (it.unitPrice ? (it.unitPrice / 0.8) : 0));
+                const isMatched = it.matchedRetail != null;
+                const posVal = isMatched ? Number(it.matchedRetail) : null;
+                const lpVal = posVal == null ? null : Number((posVal - srpVal).toFixed(2));
+                let lpColor = "#000000";
+                if (lpVal !== null && lpVal !== 0) {
+                  if (lpVal < 0) lpColor = "#dc2626";
+                  else if (lpVal > 0) lpColor = "#16a34a";
+                }
+                return (
+                  <div className={`shelf-tag ${!isMatched ? "not-in-pricebook" : ""}`} key={i}>
+                    <div className="tag-header">
+                      <span className="tag-brand">KOKO RETAIL</span>
+                      <span className="tag-cat">{it.category || "General"}</span>
+                    </div>
+                    <div className="tag-title">{it.description || "Unnamed Item"}</div>
+                    <BarcodeGtin14 upc={it.upc} />
+                    <div className="tag-prices">
+                      <div className="tag-price-block">
+                        <small>POS</small>
+                        <strong>{isMatched ? money(posVal) : "—"}</strong>
+                      </div>
+                      <div className="tag-price-block">
+                        <small>SRP</small>
+                        <span>{money(srpVal)}</span>
+                      </div>
+                      <div className="tag-price-block">
+                        <small>L/P</small>
+                        <span style={{ color: lpColor, fontWeight: 700 }}>
+                          {lpVal == null ? "—" : money(lpVal)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+      </div>
     </div>
   </div>;
 }

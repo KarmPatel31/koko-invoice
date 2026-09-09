@@ -19,6 +19,7 @@
     "dotenv": "^17.2.0",
     "express": "^5.1.0",
     "firebase": "^12.18.0",
+    "html2pdf.js": "^0.14.0",
     "lucide-react": "^0.542.0",
     "multer": "^2.0.2",
     "papaparse": "^5.5.3",
