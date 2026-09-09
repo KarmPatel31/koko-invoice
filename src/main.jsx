@@ -433,12 +433,22 @@ function App() {
     seedFirestoreIfEmpty().then(() => {
       unsubscribe = subscribeToFirestore((cloudData) => {
         setFirestoreConnected(true);
-        setData((prev) => ({
-          stores: cloudData.stores?.length ? cloudData.stores : prev.stores,
-          invoices: cloudData.invoices?.length ? cloudData.invoices : prev.invoices,
-          quotes: cloudData.quotes?.length ? cloudData.quotes : prev.quotes,
-          tasks: cloudData.tasks?.length ? cloudData.tasks : prev.tasks
-        }));
+        setData((prev) => {
+          let mergedStores = cloudData.stores || [];
+          if (prev.stores && prev.stores.length) {
+            const missingInCloud = prev.stores.filter(ps => !mergedStores.some(cs => cs.id === ps.id));
+            if (missingInCloud.length) {
+              mergedStores = [...mergedStores, ...missingInCloud];
+              missingInCloud.forEach(s => saveStoreDoc(s));
+            }
+          }
+          return {
+            stores: mergedStores.length ? mergedStores : prev.stores,
+            invoices: cloudData.invoices?.length ? cloudData.invoices : prev.invoices,
+            quotes: cloudData.quotes?.length ? cloudData.quotes : prev.quotes,
+            tasks: cloudData.tasks?.length ? cloudData.tasks : prev.tasks
+          };
+        });
       });
     }).catch(err => {
       console.error("Firestore init error:", err);

@@ -72,7 +72,7 @@ export async function seedFirestoreIfEmpty() {
     const storesSnap = await getDocs(collection(db, "stores"));
     if (storesSnap.empty) {
       for (const store of initialSeed.stores) {
-        await setDoc(doc(db, "stores", store.id), store);
+        await saveStoreDoc(store);
       }
     }
 
@@ -101,13 +101,49 @@ export async function seedFirestoreIfEmpty() {
   }
 }
 
+const CHUNK_SIZE = 250;
+
+async function loadStoreProducts(data, storeId) {
+  if (!data.hasChunks) {
+    return data.products || [];
+  }
+  try {
+    const chunksSnap = await getDocs(collection(db, "stores", storeId, "chunks"));
+    const allProducts = [];
+    // Sort chunks by ID order
+    const docs = chunksSnap.docs.sort((a, b) => a.id.localeCompare(b.id));
+    for (const cDoc of docs) {
+      const items = cDoc.data().items || [];
+      allProducts.push(...items);
+    }
+    return allProducts;
+  } catch (err) {
+    console.error(`Error loading product chunks for store ${storeId}:`, err);
+    return data.products || [];
+  }
+}
+
 // Real-time listener for all app collections
 export function subscribeToFirestore(onChange) {
   let cache = { stores: [], invoices: [], quotes: [], tasks: [] };
 
-  const unsubStores = onSnapshot(collection(db, "stores"), (snap) => {
-    cache.stores = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-    onChange({ ...cache });
+  const unsubStores = onSnapshot(collection(db, "stores"), async (snap) => {
+    try {
+      const storePromises = snap.docs.map(async (docSnap) => {
+        const data = docSnap.data();
+        const products = await loadStoreProducts(data, docSnap.id);
+        return {
+          id: docSnap.id,
+          name: data.name || "Price Book",
+          location: data.location || "Main Location",
+          products: products
+        };
+      });
+      cache.stores = await Promise.all(storePromises);
+      onChange({ ...cache });
+    } catch (err) {
+      console.error("Error reading stores snapshot:", err);
+    }
   });
 
   const unsubInvoices = onSnapshot(collection(db, "invoices"), (snap) => {
@@ -135,11 +171,57 @@ export function subscribeToFirestore(onChange) {
 
 // Stores & Price Books CRUD
 export async function saveStoreDoc(store) {
-  await setDoc(doc(db, "stores", store.id), store);
+  if (!store || !store.id) return;
+  try {
+    const products = store.products || [];
+    const meta = {
+      id: store.id,
+      name: store.name || "Price Book",
+      location: store.location || "Main Location",
+      productCount: products.length,
+      updatedAt: Date.now()
+    };
+
+    if (products.length <= CHUNK_SIZE) {
+      await setDoc(doc(db, "stores", store.id), {
+        ...meta,
+        products: products,
+        hasChunks: false
+      });
+      return;
+    }
+
+    // Larger price books: store metadata in main doc and products in chunks
+    await setDoc(doc(db, "stores", store.id), {
+      ...meta,
+      products: [],
+      hasChunks: true
+    });
+
+    const chunksCount = Math.ceil(products.length / CHUNK_SIZE);
+    for (let i = 0; i < chunksCount; i++) {
+      const chunkItems = products.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+      const chunkId = `chunk_${String(i).padStart(4, "0")}`;
+      await setDoc(doc(db, "stores", store.id, "chunks", chunkId), {
+        items: chunkItems
+      });
+    }
+  } catch (err) {
+    console.error("saveStoreDoc error:", err);
+  }
 }
 
 export async function deleteStoreDoc(storeId) {
-  await deleteDoc(doc(db, "stores", storeId));
+  if (!storeId) return;
+  try {
+    const chunksSnap = await getDocs(collection(db, "stores", storeId, "chunks"));
+    for (const cDoc of chunksSnap.docs) {
+      await deleteDoc(doc(db, "stores", storeId, "chunks", cDoc.id));
+    }
+    await deleteDoc(doc(db, "stores", storeId));
+  } catch (err) {
+    console.error("deleteStoreDoc error:", err);
+  }
 }
 
 // Invoices CRUD
