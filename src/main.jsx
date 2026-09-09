@@ -6,7 +6,8 @@ import {
   Search, Plus, Trash2, Download, Printer, ChevronDown, Sparkles, X,
   ArrowUpRight, ArrowDownRight, PackageSearch, CircleDollarSign, Building2,
   MoreHorizontal, CheckCircle2, Clock3, CircleDashed, Key, Settings, LogOut,
-  User, Lock, Mail, Eye, EyeOff, Check, AlertCircle, ShieldCheck, Pencil, Loader2
+  User, Lock, Mail, Eye, EyeOff, Check, AlertCircle, ShieldCheck, Pencil, Loader2,
+  Share2
 } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, LineChart, Line
@@ -1542,9 +1543,49 @@ function InvoicePreview({ invoice, stores = [], activeStore, onClose }) {
     window.print();
   };
 
+  const handleShareWhatsApp = async () => {
+    const shareText = `🧾 *Koko Invoice Details*\n` +
+      `• *Vendor:* ${invoice.vendor || "Unknown"}\n` +
+      `• *Invoice #:* ${invoice.id}\n` +
+      `• *Date:* ${invoice.date || "N/A"}\n` +
+      `• *Store:* ${targetStore?.name || "Store"}\n` +
+      `• *Total:* ${money(invoice.total)}\n` +
+      `• *Items:* ${items.length} product(s)\n\n` +
+      `Sent via Koko Invoice System`;
+
+    const whatsappUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(shareText)}`;
+
+    if (navigator.share && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+      try {
+        await navigator.share({
+          title: formattedTitle,
+          text: shareText,
+        });
+        return;
+      } catch (err) {
+        if (err.name !== "AbortError") {
+          console.log("Fallback to WhatsApp URL:", err);
+        } else {
+          return;
+        }
+      }
+    }
+
+    window.open(whatsappUrl, "_blank", "noopener,noreferrer");
+  };
+
   return <div className="modal-backdrop">
     <div className="preview-modal">
-      <div className="preview-toolbar"><div><b>Koko Invoice Preview</b><span>{invoice.id}</span></div><div><button className="ghost" onClick={handlePrint}><Printer size={16} /> Print / Save PDF</button><button className="icon-btn" onClick={onClose}><X size={18} /></button></div></div>
+      <div className="preview-toolbar">
+        <div><b>Koko Invoice Preview</b><span>{invoice.id}</span></div>
+        <div>
+          <button className="secondary" onClick={handleShareWhatsApp} style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+            <Share2 size={16} style={{ color: "#25D366" }} /> Share to WhatsApp
+          </button>
+          <button className="ghost" onClick={handlePrint}><Printer size={16} /> Print / Save PDF</button>
+          <button className="icon-btn" onClick={onClose}><X size={18} /></button>
+        </div>
+      </div>
       <div className="print-sheet">
         <div className="invoice-head"><div><img src="/logo.png" alt="Koko Logo" style={{ width: 44, height: 44, objectFit: "contain", borderRadius: 8 }} /><h2>Koko Invoice</h2></div><div><span>INVOICE</span><strong>{invoice.id}</strong></div></div>
         <div className="invoice-meta"><div><small>VENDOR</small><b>{invoice.vendor}</b></div><div><small>DATE</small><b>{invoice.date}</b></div><div><small>STORE</small><b>{targetStore?.name || "Store"}</b></div><div><small>TOTAL</small><b>{money(invoice.total)}</b></div></div>
