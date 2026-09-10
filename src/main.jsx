@@ -57,44 +57,46 @@ function matchPriceBook(items, products) {
 
   const byUpc = new Map();
   const byName = new Map();
+  const normalizedProducts = [];
 
   for (const p of products) {
     const k = normalizeUpc(p.upc);
     if (k) byUpc.set(k, p);
     const n = cleanStr(p.name);
     if (n) byName.set(n, p);
+    normalizedProducts.push({ prod: p, normUpc: k, normName: n });
   }
 
   return (items || []).map(item => {
     let p = null;
     const itemUpcClean = normalizeUpc(item.upc);
 
-    // 1. Direct UPC match
+    // 1. Direct Normalized UPC match (handles GTIN-14 vs UPC-A vs EAN-13 leading zeros)
     if (itemUpcClean && byUpc.has(itemUpcClean)) {
       p = byUpc.get(itemUpcClean);
     }
 
-    // 2. Substring / Suffix UPC match (handles GTIN-14 vs UPC-A vs EAN-13 differences)
-    if (!p && itemUpcClean.length >= 6) {
-      for (const prod of products) {
-        const prodUpcClean = normalizeUpc(prod.upc);
-        if (prodUpcClean && (prodUpcClean.endsWith(itemUpcClean) || itemUpcClean.endsWith(prodUpcClean) || prodUpcClean.includes(itemUpcClean) || itemUpcClean.includes(prodUpcClean))) {
-          p = prod;
-          break;
+    // 2. Strict UPC Suffix match for 8+ digit barcodes (e.g. 12-digit UPC vs 13/14-digit GTIN)
+    if (!p && itemUpcClean && itemUpcClean.length >= 8) {
+      for (const { prod, normUpc } of normalizedProducts) {
+        if (normUpc && normUpc.length >= 8) {
+          if (normUpc.endsWith(itemUpcClean) || itemUpcClean.endsWith(normUpc)) {
+            p = prod;
+            break;
+          }
         }
       }
     }
 
-    // 3. Product Description / Name match
+    // 3. Exact Description / Product Name match
     if (!p && (item.description || item.name)) {
       const itemDescClean = cleanStr(item.description || item.name);
       if (itemDescClean) {
         if (byName.has(itemDescClean)) {
           p = byName.get(itemDescClean);
         } else {
-          for (const prod of products) {
-            const prodNameClean = cleanStr(prod.name);
-            if (prodNameClean && (itemDescClean.includes(prodNameClean) || prodNameClean.includes(itemDescClean))) {
+          for (const { prod, normName } of normalizedProducts) {
+            if (normName && normName.length >= 6 && itemDescClean === normName) {
               p = prod;
               break;
             }
@@ -108,7 +110,7 @@ function matchPriceBook(items, products) {
     const comparisonBase = invoiceSrp || Number(item.unitPrice || 0);
 
     // Existing price book products keep their price book department; AI determines department for new products only
-    const department = (p && p.department) ? p.department : (item.category || item.department || "Miscellaneous");
+    const department = (p && p.department) ? p.department : (item.category || item.department || "General");
 
     return {
       ...item,
