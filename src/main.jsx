@@ -51,6 +51,8 @@ function matchPriceBook(items, products) {
       ...item,
       matchedRetail: null,
       matchedProduct: null,
+      isPartialMatch: false,
+      matchType: "none",
       priceDifference: 0
     }));
   }
@@ -69,21 +71,23 @@ function matchPriceBook(items, products) {
 
   return (items || []).map(item => {
     let p = null;
+    let matchType = "none";
     const itemUpcClean = normalizeUpc(item.upc);
 
-    // 1. Direct Normalized UPC match (handles GTIN-14 vs UPC-A vs EAN-13 leading zeros)
+    // 1. Direct Exact Normalized UPC match (handles GTIN-14 vs UPC-A vs EAN-13 leading zeros)
     if (itemUpcClean && byUpc.has(itemUpcClean)) {
       p = byUpc.get(itemUpcClean);
+      matchType = "exact";
     }
 
-    // 2. Strict UPC Suffix match for 8+ digit barcodes (e.g. 12-digit UPC vs 13/14-digit GTIN)
-    if (!p && itemUpcClean && itemUpcClean.length >= 8) {
+    // 2. Partial 5-digit UPC suffix match if exact match fails
+    if (!p && itemUpcClean && itemUpcClean.length >= 5) {
+      const suffix5 = itemUpcClean.slice(-5);
       for (const { prod, normUpc } of normalizedProducts) {
-        if (normUpc && normUpc.length >= 8) {
-          if (normUpc.endsWith(itemUpcClean) || itemUpcClean.endsWith(normUpc)) {
-            p = prod;
-            break;
-          }
+        if (normUpc && normUpc.length >= 5 && normUpc.slice(-5) === suffix5) {
+          p = prod;
+          matchType = "partial";
+          break;
         }
       }
     }
@@ -94,10 +98,12 @@ function matchPriceBook(items, products) {
       if (itemDescClean) {
         if (byName.has(itemDescClean)) {
           p = byName.get(itemDescClean);
+          matchType = "exact";
         } else {
           for (const { prod, normName } of normalizedProducts) {
             if (normName && normName.length >= 6 && itemDescClean === normName) {
               p = prod;
+              matchType = "exact";
               break;
             }
           }
@@ -109,7 +115,6 @@ function matchPriceBook(items, products) {
     const invoiceSrp = Number(item.srp || 0);
     const comparisonBase = invoiceSrp || Number(item.unitPrice || 0);
 
-    // Existing price book products keep their price book department; AI determines department for new products only
     const department = (p && p.department) ? p.department : (item.category || item.department || "General");
 
     return {
@@ -118,6 +123,8 @@ function matchPriceBook(items, products) {
       department: department,
       matchedRetail,
       matchedProduct: p?.name || null,
+      isPartialMatch: matchType === "partial",
+      matchType,
       priceDifference: matchedRetail == null ? 0 : Number((comparisonBase - matchedRetail).toFixed(2))
     };
   });
@@ -1196,8 +1203,10 @@ function AIParser({ data, save, activeStore, notify, setPreview, apiKey, setPage
               <thead><tr><th>UPC</th><th>Description</th><th>Category</th><th>Cost</th><th>POS</th><th>Diff</th></tr></thead>
               <tbody>{(parsed.items || []).map((item, i) => {
                 const isMatched = item.matchedRetail != null;
+                const isPartial = item.isPartialMatch || item.matchType === "partial";
                 const diff = Number(item.priceDifference || 0);
-                return <tr key={i} className={!isMatched ? "not-in-pricebook" : ""}>
+                const rowClass = isPartial ? "partial-upc-match" : !isMatched ? "not-in-pricebook" : "";
+                return <tr key={i} className={rowClass}>
                   <td className="mono">{item.upc || "—"}</td><td><b>{item.description || "Unknown"}</b></td><td>{item.category || "Misc"}</td>
                   <td>{money(item.unitPrice)}</td><td>{isMatched ? money(item.matchedRetail) : "—"}</td>
                   <td className={diff > 0 ? "negative" : diff < 0 ? "positive" : ""}>{diff === 0 ? "—" : `${diff > 0 ? "+" : ""}${money(diff)}`}</td>
@@ -1678,6 +1687,7 @@ function InvoicePreview({ invoice, stores = [], activeStore, onClose }) {
           {items.length ? <table className="print-table"><thead><tr><th>UPC</th><th>Description</th><th>Dept</th><th>Qty</th><th>SRP</th><th>POS</th><th>L/P</th></tr></thead><tbody>{items.map((it, i) => {
             const srpVal = Number(it.srp || (it.unitPrice ? (it.unitPrice / 0.8) : 0));
             const isMatched = it.matchedRetail != null;
+            const isPartial = it.isPartialMatch || it.matchType === "partial";
             const posVal = isMatched ? Number(it.matchedRetail) : null;
             const lpVal = posVal == null ? null : Number((posVal - srpVal).toFixed(2));
             let lpColor = "#000000";
@@ -1685,7 +1695,8 @@ function InvoicePreview({ invoice, stores = [], activeStore, onClose }) {
               if (lpVal < 0) lpColor = "#dc2626";
               else if (lpVal > 0) lpColor = "#16a34a";
             }
-            return <tr key={i} className={!isMatched ? "not-in-pricebook" : ""}>
+            const rowClass = isPartial ? "partial-upc-match" : !isMatched ? "not-in-pricebook" : "";
+            return <tr key={i} className={rowClass}>
               <td>{it.upc || "—"}</td>
               <td>{it.description}</td>
               <td>{it.category || it.department || "General"}</td>
@@ -1711,6 +1722,7 @@ function InvoicePreview({ invoice, stores = [], activeStore, onClose }) {
               {items.map((it, i) => {
                 const srpVal = Number(it.srp || (it.unitPrice ? (it.unitPrice / 0.8) : 0));
                 const isMatched = it.matchedRetail != null;
+                const isPartial = it.isPartialMatch || it.matchType === "partial";
                 const posVal = isMatched ? Number(it.matchedRetail) : null;
                 const lpVal = posVal == null ? null : Number((posVal - srpVal).toFixed(2));
                 let lpColor = "#000000";
@@ -1718,8 +1730,9 @@ function InvoicePreview({ invoice, stores = [], activeStore, onClose }) {
                   if (lpVal < 0) lpColor = "#dc2626";
                   else if (lpVal > 0) lpColor = "#16a34a";
                 }
+                const tagClass = isPartial ? "shelf-tag partial-upc-match" : !isMatched ? "shelf-tag not-in-pricebook" : "shelf-tag";
                 return (
-                  <div className={`shelf-tag ${!isMatched ? "not-in-pricebook" : ""}`} key={i}>
+                  <div className={tagClass} key={i}>
                     <div className="tag-header">
                       <span className="tag-brand">KOKO RETAIL</span>
                       <span className="tag-cat">{it.category || "General"}</span>
