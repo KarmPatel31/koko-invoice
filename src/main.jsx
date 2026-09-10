@@ -8,7 +8,7 @@ import {
   ArrowUpRight, ArrowDownRight, PackageSearch, CircleDollarSign, Building2,
   MoreHorizontal, CheckCircle2, Clock3, CircleDashed, Key, Settings, LogOut,
   User, Lock, Mail, Eye, EyeOff, Check, AlertCircle, ShieldCheck, Pencil, Loader2,
-  Share2
+  Share2, RefreshCw
 } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, LineChart, Line
@@ -1233,6 +1233,7 @@ function PriceBooks({ data, save, activeStore, activeStoreId, setActiveStoreId, 
   const [editStoreLocation, setEditStoreLocation] = useState("");
 
   const fileRef = useRef();
+  const replaceFileRef = useRef();
 
   const handleOpenAddModal = () => {
     setNewStoreName(`Price Book #${data.stores.length + 1}`);
@@ -1273,53 +1274,68 @@ function PriceBooks({ data, save, activeStore, activeStoreId, setActiveStoreId, 
     notify(`Renamed price book to "${updatedName}".`);
   };
 
+  const parseCsvProducts = (rawRows) => {
+    const firstRow = rawRows[0] || [];
+    const isHeader = firstRow.some(cell => {
+      const s = String(cell).toLowerCase();
+      return s.includes("upc") || s.includes("name") || s.includes("dept") || s.includes("department") || s.includes("retail") || s.includes("price") || s.includes("pos") || s.includes("plu") || s.includes("item");
+    });
+
+    const rows = isHeader ? rawRows.slice(1) : rawRows;
+
+    return rows.map(r => {
+      if (Array.isArray(r)) {
+        const name = String(r[1] ?? r[0] ?? "Unnamed item").trim();
+        const upc = String(r[2] ?? r[0] ?? "").trim();
+        const department = String(r[4] ?? "Miscellaneous").trim() || "Miscellaneous";
+
+        let rawPrice = r[6];
+        if (rawPrice == null || rawPrice === "") {
+          for (let i = r.length - 1; i >= 0; i--) {
+            if (i !== 1 && i !== 2 && i !== 4 && r[i] != null && String(r[i]).replace(/[^0-9.]/g, "") !== "") {
+              rawPrice = r[i];
+              break;
+            }
+          }
+        }
+        const retail = Number(String(rawPrice || 0).replace(/[^0-9.]/g, "")) || 0;
+        return { upc, name, department, retail };
+      } else {
+        const name = String(r.Name ?? r.name ?? r.Product ?? r.Description ?? r[1] ?? "Unnamed item").trim();
+        const upc = String(r["UPC/PLU"] ?? r["UPC / PLU"] ?? r.UPC ?? r.upc ?? r.PLU ?? r.Barcode ?? r.GTIN ?? r[2] ?? "").trim();
+        const department = String(r.Department ?? r.department ?? r.Category ?? r[4] ?? "Miscellaneous").trim() || "Miscellaneous";
+        const rawPrice = r["Retail Price (POS)"] ?? r["Retail Price"] ?? r["POS Price"] ?? r.Price ?? r.Retail ?? r.SRP ?? r.retail ?? r.POS ?? r[6] ?? 0;
+        const retail = Number(String(rawPrice).replace(/[^0-9.]/g, "")) || 0;
+        return { upc, name, department, retail };
+      }
+    }).filter(x => (x.upc && x.upc.match(/\d+/)) || (x.name && x.name !== "Unnamed item"));
+  };
+
+  const handleReplaceCsv = (file) => {
+    if (!file || !activeStore) return;
+    Papa.parse(file, {
+      header: false,
+      skipEmptyLines: true,
+      complete: ({ data: rawRows }) => {
+        if (!rawRows || !rawRows.length) return notify("CSV file was empty.");
+        const products = parseCsvProducts(rawRows);
+        const stores = data.stores.map(s => s.id === activeStoreId ? { ...s, products } : s);
+        save({ ...data, stores });
+        notify(`Replaced price book for "${activeStore.name}" with ${products.length} latest products.`);
+      }
+    });
+  };
+
   const importCsv = (file) => {
     Papa.parse(file, {
       header: false,
       skipEmptyLines: true,
       complete: ({ data: rawRows }) => {
         if (!rawRows || !rawRows.length) return notify("CSV file was empty.");
-
-        // Detect if first row is a header row
-        const firstRow = rawRows[0] || [];
-        const isHeader = firstRow.some(cell => {
-          const s = String(cell).toLowerCase();
-          return s.includes("upc") || s.includes("name") || s.includes("dept") || s.includes("department") || s.includes("retail") || s.includes("price") || s.includes("pos") || s.includes("plu") || s.includes("item");
-        });
-
-        const rows = isHeader ? rawRows.slice(1) : rawRows;
-
-        const products = rows.map(r => {
-          if (Array.isArray(r)) {
-            // Column B (1) = Name, Column C (2) = UPC/PLU, Column E (4) = Department, Column G (6) = Retail Price (POS)
-            const name = String(r[1] ?? r[0] ?? "Unnamed item").trim();
-            const upc = String(r[2] ?? r[0] ?? "").trim();
-            const department = String(r[4] ?? "Miscellaneous").trim() || "Miscellaneous";
-
-            let rawPrice = r[6];
-            if (rawPrice == null || rawPrice === "") {
-              for (let i = r.length - 1; i >= 0; i--) {
-                if (i !== 1 && i !== 2 && i !== 4 && r[i] != null && String(r[i]).replace(/[^0-9.]/g, "") !== "") {
-                  rawPrice = r[i];
-                  break;
-                }
-              }
-            }
-            const retail = Number(String(rawPrice || 0).replace(/[^0-9.]/g, "")) || 0;
-            return { upc, name, department, retail };
-          } else {
-            const name = String(r.Name ?? r.name ?? r.Product ?? r.Description ?? r[1] ?? "Unnamed item").trim();
-            const upc = String(r["UPC/PLU"] ?? r["UPC / PLU"] ?? r.UPC ?? r.upc ?? r.PLU ?? r.Barcode ?? r.GTIN ?? r[2] ?? "").trim();
-            const department = String(r.Department ?? r.department ?? r.Category ?? r[4] ?? "Miscellaneous").trim() || "Miscellaneous";
-            const rawPrice = r["Retail Price (POS)"] ?? r["Retail Price"] ?? r["POS Price"] ?? r.Price ?? r.Retail ?? r.SRP ?? r.retail ?? r.POS ?? r[6] ?? 0;
-            const retail = Number(String(rawPrice).replace(/[^0-9.]/g, "")) || 0;
-            return { upc, name, department, retail };
-          }
-        }).filter(x => (x.upc && x.upc.match(/\d+/)) || (x.name && x.name !== "Unnamed item"));
-
-        const stores = data.stores.map(s => s.id === activeStoreId ? { ...s, products } : s);
+        const products = parseCsvProducts(rawRows);
+        const stores = data.stores.map(s => s.id === activeStoreId ? { ...s, products: [...(s.products || []), ...products] } : s);
         save({ ...data, stores });
-        notify(`Imported ${products.length} products to ${activeStore?.name || "store"}.`);
+        notify(`Added ${products.length} products to ${activeStore?.name || "store"}.`);
       }
     });
   };
@@ -1383,10 +1399,15 @@ function PriceBooks({ data, save, activeStore, activeStoreId, setActiveStoreId, 
           <p>{activeStore?.location} · {activeStore?.products?.length || 0} products</p>
         </div>
         <div className="inline-actions">
+          <button className="primary" onClick={() => replaceFileRef.current?.click()} style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+            <RefreshCw size={15} /> Replace Price Book
+          </button>
+          <input ref={replaceFileRef} type="file" accept=".csv" hidden onChange={e => { if (e.target.files[0]) { handleReplaceCsv(e.target.files[0]); e.target.value = ""; } }} />
+
           <button className="ghost" onClick={handleOpenEditModal}><Pencil size={15} /> Rename</button>
           <button className="ghost" onClick={downloadSample}><Download size={16} /> Sample CSV</button>
-          <button className="secondary" onClick={() => fileRef.current?.click()}><UploadCloud size={16} /> Import CSV</button>
-          <input ref={fileRef} type="file" accept=".csv" hidden onChange={e => e.target.files[0] && importCsv(e.target.files[0])} />
+          <button className="secondary" onClick={() => fileRef.current?.click()}><UploadCloud size={16} /> Import / Append CSV</button>
+          <input ref={fileRef} type="file" accept=".csv" hidden onChange={e => { if (e.target.files[0]) { importCsv(e.target.files[0]); e.target.value = ""; } }} />
           {data.stores.length > 1 && (
             <button className="danger-btn" onClick={deletePriceBook} title="Delete this price book"><Trash2 size={16} /></button>
           )}
@@ -1396,7 +1417,7 @@ function PriceBooks({ data, save, activeStore, activeStoreId, setActiveStoreId, 
       <div className="table-wrap">
         <table><thead><tr><th>UPC / PLU</th><th>Product</th><th>Department</th><th>Retail</th></tr></thead>
           <tbody>{products.map((p, i) => <tr key={`${p.upc}-${i}`}><td className="mono">{p.upc || "—"}</td><td><b>{p.name}</b></td><td>{p.department}</td><td><b>{money(p.retail)}</b></td></tr>)}
-            {!products.length && <tr><td colSpan="4"><div className="empty small">No products found. Import a CSV price book.</div></td></tr>}
+            {!products.length && <tr><td colSpan="4"><div className="empty small">No products found. Import or replace CSV price book.</div></td></tr>}
           </tbody></table>
       </div>
     </div>
@@ -1428,7 +1449,7 @@ function PriceBooks({ data, save, activeStore, activeStoreId, setActiveStoreId, 
     )}
 
     {showEditModal && (
-      <Modal title="Rename Price Book" onClose={() => setShowEditModal(false)}>
+      <Modal title="Manage Price Book" onClose={() => setShowEditModal(false)}>
         <form onSubmit={handleSaveEditStore} className="form-grid">
           <Field label="Price Book Name">
             <input
@@ -1448,7 +1469,12 @@ function PriceBooks({ data, save, activeStore, activeStoreId, setActiveStoreId, 
               onChange={e => setEditStoreLocation(e.target.value)}
             />
           </Field>
-          <button type="submit" className="primary span2">Save Name</button>
+          <Field label="Replace with Newest CSV Catalog" className="span2">
+            <button type="button" className="secondary" style={{ width: "100%", justifyContent: "center" }} onClick={() => { setShowEditModal(false); replaceFileRef.current?.click(); }}>
+              <RefreshCw size={15} /> Upload & Replace with Latest CSV
+            </button>
+          </Field>
+          <button type="submit" className="primary span2">Save Details</button>
         </form>
       </Modal>
     )}
