@@ -948,7 +948,7 @@ function Dashboard({ data, activeStore, save, setPage }) {
 
     <div className="panel">
       <div className="panel-title"><div><h3>Recent invoices</h3><p>Latest vendor documents</p></div><button className="ghost" onClick={() => setPage("Invoices")}>View all</button></div>
-      <InvoiceTable invoices={data.invoices.slice(0, 5)} compact />
+      <InvoiceTable invoices={data.invoices.slice(0, 5)} stores={data.stores} compact />
     </div>
   </>;
 }
@@ -1483,26 +1483,63 @@ function PriceBooks({ data, save, activeStore, activeStoreId, setActiveStoreId, 
 
 function Invoices({ data, save, setPreview }) {
   const [filter, setFilter] = useState("All");
-  const rows = filter === "All" ? data.invoices : data.invoices.filter(i => i.status === filter);
+  const [selectedStoreId, setSelectedStoreId] = useState("All");
+
+  const rows = (data.invoices || []).filter(i => {
+    const matchesStatus = filter === "All" || i.status === filter;
+    const invStoreId = i.storeId || data.stores?.[0]?.id;
+    const matchesStore = selectedStoreId === "All" || invStoreId === selectedStoreId;
+    return matchesStatus && matchesStore;
+  });
+
   const setStatus = (id, status) => save({ ...data, invoices: data.invoices.map(i => i.id === id ? { ...i, status } : i) });
 
   return <div className="panel">
-    <div className="panel-title"><div><h3>Invoice Ledger</h3><p>Track vendor invoices and review payment status.</p></div>
-      <div className="segmented">{["All", "Working", "Done"].map(x => <button className={filter === x ? "active" : ""} onClick={() => setFilter(x)} key={x}>{x}</button>)}</div>
+    <div className="panel-title">
+      <div>
+        <h3>Invoice Ledger</h3>
+        <p>Track vendor invoices and filter by store price book.</p>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <Store size={15} style={{ color: "#a78bfa" }} />
+          <select
+            value={selectedStoreId}
+            onChange={e => setSelectedStoreId(e.target.value)}
+            style={{ background: "#0c111c", color: "#e9edf5", border: "1px solid #252d3f", padding: "6px 10px", borderRadius: 8, fontSize: 11, fontWeight: 600, cursor: "pointer" }}
+          >
+            <option value="All">All Price Books ({data.stores?.length || 0})</option>
+            {(data.stores || []).map(s => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </select>
+        </div>
+        <div className="segmented">
+          {["All", "Working", "Done"].map(x => <button className={filter === x ? "active" : ""} onClick={() => setFilter(x)} key={x}>{x}</button>)}
+        </div>
+      </div>
     </div>
-    <InvoiceTable invoices={rows} onOpen={setPreview} onStatus={setStatus} />
+    <InvoiceTable invoices={rows} stores={data.stores} onOpen={setPreview} onStatus={setStatus} />
   </div>;
 }
 
-function InvoiceTable({ invoices, compact, onOpen, onStatus }) {
+function InvoiceTable({ invoices, stores = [], compact, onOpen, onStatus }) {
   return <div className="table-wrap"><table>
-    <thead><tr><th>Invoice</th><th>Vendor</th><th>Date</th><th>Items</th><th>Status</th><th>Total</th>{!compact && <th />}</tr></thead>
-    <tbody>{invoices.map(inv => <tr key={inv.id}>
-      <td><b className="purple">{inv.id}</b></td><td><b>{inv.vendor}</b></td><td>{inv.date}</td><td>{inv.items || 0}</td>
-      <td>{onStatus ? <select className={`status ${inv.status.toLowerCase()}`} value={inv.status} onChange={e => onStatus(inv.id, e.target.value)}><option>Working</option><option>Done</option></select> : <span className={`status ${inv.status.toLowerCase()}`}>{inv.status}</span>}</td>
-      <td><b>{money(inv.total)}</b></td>
-      {!compact && <td><button className="icon-btn" onClick={() => onOpen(inv)}><MoreHorizontal size={18} /></button></td>}
-    </tr>)}</tbody>
+    <thead><tr><th>Invoice</th><th>Vendor</th><th>Date</th><th>Price Book</th><th>Items</th><th>Status</th><th>Total</th>{!compact && <th />}</tr></thead>
+    <tbody>{invoices.map(inv => {
+      const targetStore = (stores || []).find(s => s.id === inv.storeId) || (stores || [])[0];
+      const storeName = targetStore?.name || "Price Book";
+      return <tr key={inv.id}>
+        <td><b className="purple">{inv.id}</b></td>
+        <td><b>{inv.vendor}</b></td>
+        <td>{inv.date}</td>
+        <td><span className="tag pricebook" style={{ fontSize: "10px", fontWeight: 600 }}>{storeName}</span></td>
+        <td>{inv.items || 0}</td>
+        <td>{onStatus ? <select className={`status ${inv.status.toLowerCase()}`} value={inv.status} onChange={e => onStatus(inv.id, e.target.value)}><option>Working</option><option>Done</option></select> : <span className={`status ${inv.status.toLowerCase()}`}>{inv.status}</span>}</td>
+        <td><b>{money(inv.total)}</b></td>
+        {!compact && <td><button className="icon-btn" onClick={() => onOpen(inv)}><MoreHorizontal size={18} /></button></td>}
+      </tr>;
+    })}</tbody>
   </table></div>;
 }
 
