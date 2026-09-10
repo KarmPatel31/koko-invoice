@@ -1197,7 +1197,7 @@ function AIParser({ data, save, activeStore, notify, setPreview, apiKey, setPage
                 const diff = Number(item.priceDifference || 0);
                 return <tr key={i} className={!isMatched ? "not-in-pricebook" : ""}>
                   <td className="mono">{item.upc || "—"}</td><td><b>{item.description || "Unknown"}</b></td><td>{item.category || "Misc"}</td>
-                  <td>{money(item.unitPrice)}</td><td>{isMatched ? money(item.matchedRetail) : <span className="unmatched-badge">Not in Price Book</span>}</td>
+                  <td>{money(item.unitPrice)}</td><td>{isMatched ? money(item.matchedRetail) : "—"}</td>
                   <td className={diff > 0 ? "negative" : diff < 0 ? "positive" : ""}>{diff === 0 ? "—" : `${diff > 0 ? "+" : ""}${money(diff)}`}</td>
                 </tr>
               })}</tbody>
@@ -1673,7 +1673,7 @@ function InvoicePreview({ invoice, stores = [], activeStore, onClose }) {
         <div className="print-sheet">
           <div className="invoice-head"><div><img src="/logo.png" alt="Koko Logo" style={{ width: 44, height: 44, objectFit: "contain", borderRadius: 8 }} /><h2>Koko Invoice</h2></div><div><span>INVOICE</span><strong>{invoice.id}</strong></div></div>
           <div className="invoice-meta"><div><small>VENDOR</small><b>{invoice.vendor}</b></div><div><small>DATE</small><b>{invoice.date}</b></div><div><small>STORE</small><b>{targetStore?.name || "Store"}</b></div><div><small>TOTAL</small><b>{money(invoice.total)}</b></div></div>
-          {items.length ? <table className="print-table"><thead><tr><th>UPC</th><th>Description</th><th>Qty</th><th>SRP</th><th>POS</th><th>L/P</th></tr></thead><tbody>{items.map((it, i) => {
+          {items.length ? <table className="print-table"><thead><tr><th>UPC</th><th>Description</th><th>Dept</th><th>Qty</th><th>SRP</th><th>POS</th><th>L/P</th></tr></thead><tbody>{items.map((it, i) => {
             const srpVal = Number(it.srp || (it.unitPrice ? (it.unitPrice / 0.8) : 0));
             const isMatched = it.matchedRetail != null;
             const posVal = isMatched ? Number(it.matchedRetail) : null;
@@ -1686,9 +1686,10 @@ function InvoicePreview({ invoice, stores = [], activeStore, onClose }) {
             return <tr key={i} className={!isMatched ? "not-in-pricebook" : ""}>
               <td>{it.upc || "—"}</td>
               <td>{it.description}</td>
+              <td>{it.category || it.department || "General"}</td>
               <td>{it.quantity || 1}</td>
               <td>{money(srpVal)}</td>
-              <td>{isMatched ? money(posVal) : <span style={{ color: "#a16207", fontWeight: 600, fontSize: "11px" }}>Not in Price Book</span>}</td>
+              <td>{isMatched ? money(posVal) : "—"}</td>
               <td style={{ color: lpColor, fontWeight: lpVal !== 0 ? 600 : 400 }}>{lpVal == null ? "—" : money(lpVal)}</td>
             </tr>;
           })}</tbody></table> : <div className="empty small">Detailed line items were not stored for this sample invoice.</div>}
