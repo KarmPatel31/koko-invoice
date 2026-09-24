@@ -15,6 +15,7 @@ import {
 } from "recharts";
 import "./styles.css";
 import "./landing.css";
+import "./workspace.css";
 import MarketingLanding from "./components/LandingPage.jsx";
 import { createInvoicePdf } from "./services/pdfExport.js";
 import { auth, setWorkspaceSession } from "./firebase.js";
@@ -502,7 +503,7 @@ function App() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
+    <div className="workspace-theme" style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
       {user?.isDemo && (
         <div className="demo-mode-strip">
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -522,7 +523,7 @@ function App() {
 
           <nav>
             {nav.map(([label, Icon]) => (
-              <button key={label} className={page === label ? "nav-item active" : "nav-item"} onClick={() => setPage(label)}>
+              <button key={label} aria-label={label} title={label} className={page === label ? "nav-item active" : "nav-item"} onClick={() => setPage(label)}>
                 <Icon size={18} /><span>{label}</span>
 
               </button>
@@ -552,8 +553,8 @@ function App() {
             <div className="mini-card" style={{ marginTop: 10 }}>
               <Sparkles size={18} />
               <div>
-                <strong>Firestore {firestoreConnected ? "Live" : "Syncing..."}</strong>
-                <span>Price Books & Ledger DB</span>
+                <strong>{user.isDemo ? "Sample workspace" : firestoreConnected ? "Workspace synced" : "Connecting…"}</strong>
+                <span>Your retail workspace</span>
               </div>
             </div>
           </div>
@@ -569,10 +570,10 @@ function App() {
             <select value={activeStore?.id || ""} onChange={e => setActiveStoreId(e.target.value)}>
               {data.stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
-            <button className="ghost settings-quick-btn" onClick={() => setPage("Settings")} title="API Key & Settings">
+            <button className="ghost settings-quick-btn" onClick={() => setPage("Settings")} title="Settings">
               <Key size={16} />
               <span className="key-status-text active">
-                Server-managed AI
+                Settings
               </span>
             </button>
             <button className="primary" onClick={() => setPage("AI Parser")}><UploadCloud size={17} /> Scan invoice</button>
@@ -615,7 +616,10 @@ function LoginPage({ onLogin }) {
     finally { setBusy(false); }
   }
   return <div className="login-wrapper"><div className="login-card">
-    <h2>Sign in to Koko Invoice</h2>
+    <img src="/logo.png" alt="Koko Invoice" className="login-logo" />
+    <p className="login-eyebrow">YOUR STORE WORKSPACE</p>
+    <h2>Welcome back.</h2>
+    <p className="login-intro">Sign in to manage your invoices, pricing, and team.</p>
     <form onSubmit={submit} className="auth-form">
       <label>Email<input type="email" autoComplete="username" value={email} onChange={e => setEmail(e.target.value)} required /></label>
       <label>Password<input type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} required /></label>
@@ -712,11 +716,11 @@ function Dashboard({ data, activeStore, save, setPage }) {
         <div style={{ height: 300 }}>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={chart}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#22293a" />
-              <XAxis dataKey="m" stroke="#7d879f" axisLine={false} tickLine={false} />
-              <YAxis stroke="#7d879f" axisLine={false} tickLine={false} tickFormatter={v => `$${v / 1000}k`} />
-              <Tooltip contentStyle={{ background: "#141927", border: "1px solid #293047", borderRadius: 12 }} formatter={v => money(v)} />
-              <Bar dataKey="revenue" fill="#8b5cf6" radius={[7, 7, 0, 0]} />
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#dce3da" />
+              <XAxis dataKey="m" stroke="#61716a" axisLine={false} tickLine={false} />
+              <YAxis stroke="#61716a" axisLine={false} tickLine={false} tickFormatter={v => `$${v / 1000}k`} />
+              <Tooltip contentStyle={{ background: "#fffef9", border: "1px solid #dce3da", borderRadius: 12 }} formatter={v => money(v)} />
+              <Bar dataKey="revenue" fill="#165b43" radius={[7, 7, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -939,7 +943,7 @@ function AIParser({ data, save, activeStore, notify, setPreview, setPage }) {
     <div className="panel result-panel">
       {loading ? (
         <div className="empty">
-          <Loader2 size={36} className="spin-icon" style={{ color: "#a78bfa" }} />
+          <Loader2 size={36} className="spin-icon" style={{ color: "#165b43" }} />
           <h3>AI Invoice Extraction in Progress...</h3>
           <p>{statusText || "Analyzing vendor, invoice date, line items, and pricing..."}</p>
         </div>
@@ -947,7 +951,7 @@ function AIParser({ data, save, activeStore, notify, setPreview, setPage }) {
         <div className="empty">
           <AlertCircle size={36} style={{ color: "#ef4444" }} />
           <h3 style={{ color: "#ef4444" }}>Invoice Scan Failed</h3>
-          <p style={{ color: "#94a3b8", maxWidth: 400, textAlign: "center" }}>{errorText}</p>
+          <p style={{ color: "#61716a", maxWidth: 400, textAlign: "center" }}>{errorText}</p>
           <div style={{ marginTop: 14, display: "flex", gap: 10 }}>
             <button className="secondary" onClick={parse}>Try Scan Again</button>
             <button className="ghost" onClick={handleLoadSampleInvoice}>
@@ -1277,11 +1281,11 @@ function Invoices({ data, save, setPreview }) {
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <Store size={15} style={{ color: "#a78bfa" }} />
+          <Store size={15} style={{ color: "#165b43" }} />
           <select
             value={selectedStoreId}
             onChange={e => setSelectedStoreId(e.target.value)}
-            style={{ background: "#0c111c", color: "#e9edf5", border: "1px solid #252d3f", padding: "6px 10px", borderRadius: 8, fontSize: 11, fontWeight: 600, cursor: "pointer" }}
+            style={{ background: "#fffef9", color: "#19332c", border: "1px solid #dce3da", padding: "6px 10px", borderRadius: 8, fontSize: 11, fontWeight: 600, cursor: "pointer" }}
           >
             <option value="All">All Price Books ({data.stores?.length || 0})</option>
             {(data.stores || []).map(s => (
@@ -1601,7 +1605,7 @@ function InvoicePreview({ invoice, stores = [], activeStore, onClose }) {
 }
 
 function Modal({ title, onClose, children }) {
-  return <div className="modal-backdrop"><div className="modal"><div className="modal-title"><h3>{title}</h3><button className="icon-btn" onClick={onClose}><X size={18} /></button></div>{children}</div></div>;
+  return <div className="modal-backdrop workspace-modal"><div className="modal"><div className="modal-title"><h3>{title}</h3><button className="icon-btn" onClick={onClose}><X size={18} /></button></div>{children}</div></div>;
 }
 function Field({ label, children }) { return <label className="field"><span>{label}</span>{children}</label> }
 

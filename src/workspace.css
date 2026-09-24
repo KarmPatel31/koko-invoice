@@ -1,0 +1,34 @@
+/* Workspace colors follow the public landing page; printed invoices stay independent. */
+.workspace-theme,.workspace-modal,.login-wrapper{color:#19332c;font-family:Inter,ui-sans-serif,system-ui,sans-serif}
+.workspace-theme{background:#fafbf6}
+.workspace-theme .sidebar{background:#eef2e6;border-color:#dce3da}
+.workspace-theme .brand span,.workspace-theme .topbar p,.workspace-theme .panel-title p,.workspace-theme .stat-card>span,.workspace-theme .stat-card small,.workspace-theme .mini-card span,.workspace-theme .store-tab small,.workspace-theme .user-info span{color:#61716a}
+.workspace-theme .nav-item{color:#53665d}.workspace-theme .nav-item:hover{background:#e0e9d9;color:#19332c}.workspace-theme .nav-item.active{background:#165b43;color:white}
+.workspace-theme .topbar{background:#fafbf6ed;border-color:#dce3da}
+.workspace-theme :is(.panel,.stat-card,.mini-card,.user-profile-card){background:#fffef9;border-color:#dce3da;box-shadow:0 4px 18px #19332c04}
+.workspace-theme :is(.stat-icon,.user-avatar){background:#e7efdf;color:#165b43}
+.workspace-theme :is(.mini-card strong,.user-info strong,td b,.empty h3,.dropzone h3){color:#19332c}
+:is(.workspace-theme,.workspace-modal,.login-wrapper) :is(input,select,textarea){background:#fffef9;color:#19332c;border-color:#cbd6c8;accent-color:#165b43}
+:is(.workspace-theme,.workspace-modal,.login-wrapper) :is(input,select,textarea):focus{border-color:#165b43;outline:2px solid #165b4326;outline-offset:2px}
+:is(.workspace-theme,.workspace-modal,.login-wrapper) .primary{background:#165b43;color:white;box-shadow:none}.workspace-theme .primary:hover,.workspace-modal .primary:hover,.login-wrapper .primary:hover{background:#104832}
+:is(.workspace-theme,.workspace-modal,.login-wrapper) :is(.secondary,.ghost,.icon-btn){background:#eaf0e3;color:#254c3c}
+.workspace-theme .danger-btn{background:#fbe9e4;color:#a53830}
+.workspace-theme :is(th,td,.task-row,.full-task,.full-task-list){border-color:#dce3da}.workspace-theme :is(th,td,.mono,.empty,.save-bar,.parser-actions>div,.result-total span){color:#61716a}
+.workspace-theme :is(.purple,.positive){color:#226643!important}.workspace-theme .negative{color:#ae4037!important}
+.workspace-theme :is(.tag,.status.draft){background:#edf0e7;color:#526256}.workspace-theme :is(.tag.invoice,.tag.pricebook,.status.done,.status.paid,.ai-badge){background:#e6efdf;color:#286144;border-color:#cbdcc1}
+.workspace-theme :is(.tag.quote,.tag.client,.status.working,.status.pending,.unmatched-badge){background:#faf1dd;color:#805d1d;border-color:#e8d8b6}
+.workspace-theme .progress{background:#e5eadd}.workspace-theme .progress span{background:#36765a}
+.workspace-theme :is(.dropzone,.searchbar,.segmented){background:#f7f9f0;border-color:#cbd6c8;color:#61716a}.workspace-theme .dropzone:hover,.workspace-theme .dropzone.drag{background:#eef4e7;border-color:#165b43}.workspace-theme .dropzone svg,.workspace-theme .full-task .check{color:#165b43}
+.workspace-theme .file-chip{background:#edf2e7;border-color:#cbd6c8;color:#19332c}
+.workspace-theme .store-tab{background:#fffef9;border-color:#dce3da;color:#61716a}.workspace-theme .store-tab.active{background:#e9f0df;color:#165b43;border-color:#165b43}
+.workspace-theme .segmented button{color:#61716a}.workspace-theme .segmented button.active{background:#165b43;color:#fff}
+.workspace-theme tr.not-in-pricebook{background:#faf1dd!important}.workspace-theme tr.not-in-pricebook :is(td,td b,td.mono){color:#805d1d!important}
+.workspace-theme tr.partial-upc-match{background:#eaf2e3!important}.workspace-theme tr.partial-upc-match td{border-bottom-color:#709f79!important}.workspace-theme tr.partial-upc-match :is(td b,td.mono){color:#286144!important;text-decoration-color:#709f79}
+.workspace-theme .toast{background:#173d31;border-color:#30624e;color:#fff}
+.workspace-theme .demo-mode-strip{background:#173d31;color:#f4f8ee;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 24px;font-size:12px}.demo-mode-strip button{background:#e7efdf;color:#173d31;border:0;border-radius:8px;padding:8px 12px;white-space:nowrap}
+.workspace-modal{background:#173d3170}.workspace-modal .modal{background:#fffef9;border-color:#dce3da;max-height:92dvh;overflow:auto;box-shadow:0 24px 90px #173d3126}.workspace-modal .field span{color:#61716a}
+.login-wrapper{background:#fafbf6;min-height:100dvh;padding:32px 20px;display:grid;place-items:center}.login-card{background:#fffef9;border:1px solid #dce3da;box-shadow:0 20px 70px #19332c0b;color:#19332c;width:min(440px,100%);padding:32px;border-radius:20px}.login-card h2{color:#19332c;font-size:32px;letter-spacing:-1px;margin:10px 0}.login-logo{width:48px;height:48px;object-fit:contain}.login-eyebrow{color:#165b43;font-size:10px;font-weight:750;letter-spacing:.15em;margin-top:20px}.login-intro{color:#61716a;font-size:14px;line-height:1.6}.login-card .auth-form{display:grid;gap:18px;margin-top:24px}.login-card label{display:grid;gap:8px;color:#19332c;font-size:13px;text-align:left}.login-card input{width:100%}.login-card [role=alert]{color:#805d1d;font-size:13px;line-height:1.5}.workspace-modal .login-wrapper{min-height:0;padding:0;background:transparent}.workspace-modal .login-card{border:0;box-shadow:none;padding:8px 12px 20px;margin:auto}
+:is(.workspace-theme,.workspace-modal,.login-wrapper) button:focus-visible{outline:3px solid #a2b987;outline-offset:3px}
+@media(max-width:680px){.workspace-theme nav{grid-template-columns:repeat(7,1fr)}.workspace-theme .demo-mode-strip{padding:10px 12px;flex-wrap:wrap}.workspace-theme .topbar{gap:10px;flex-wrap:wrap}.workspace-theme .top-actions{flex-wrap:wrap}.workspace-theme .toast{bottom:80px}.workspace-theme .panel-title{flex-wrap:wrap}.workspace-theme .sidebar{background:#eef2e6}.workspace-modal{padding:12px}}
+@media screen{.invoice-preview-backdrop .preview-modal{background:#eef2e6;border-color:#dce3da}.invoice-preview-backdrop .preview-toolbar{background:#fffef9f5;border-color:#dce3da;color:#19332c}.invoice-preview-backdrop .preview-toolbar span{color:#61716a}.invoice-preview-backdrop .preview-toolbar :is(.secondary,.icon-btn){background:#eaf0e3;color:#254c3c}.invoice-preview-backdrop .preview-toolbar .primary{background:#165b43;color:white}}
+.workspace-theme .key-status-text.active{color:#165b43}.workspace-theme .detail-item{background:#f1f5e9;border-color:#dce3da}.workspace-theme .detail-item .label{color:#61716a}.workspace-theme .detail-item .value{color:#19332c}.workspace-theme .auth-alert.error{background:#fbe9e4;color:#a53830;border-color:#eac5bc}
