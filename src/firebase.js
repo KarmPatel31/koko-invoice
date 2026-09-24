@@ -29,5 +29,11 @@ if (typeof window !== "undefined") {
   });
 }
 
+let workspaceSession = null;
+export function setWorkspaceSession(session) { workspaceSession = session; }
+export function getWorkspaceSession() {
+  if (!auth.currentUser || workspaceSession?.uid !== auth.currentUser.uid) throw new Error("Workspace session required");
+  return workspaceSession;
+}
 export { app, db, auth, analytics };
 export default app;

@@ -23,3 +23,7 @@ pnpm-debug.log*
 .vscode/
 .idea/
 .firebase/
+
+# Local regression artifacts
+tmp/
+output/

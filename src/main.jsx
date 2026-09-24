@@ -1,28 +1,30 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { createPortal } from "react-dom";
 import Papa from "papaparse";
-import html2pdf from "html2pdf.js";
 import {
   LayoutDashboard, Store, ReceiptText, FileText, CheckSquare, UploadCloud,
   Search, Plus, Trash2, Download, Printer, ChevronDown, Sparkles, X,
   ArrowUpRight, ArrowDownRight, PackageSearch, CircleDollarSign, Building2,
   MoreHorizontal, CheckCircle2, Clock3, CircleDashed, Key, Settings, LogOut,
   User, Lock, Mail, Eye, EyeOff, Check, AlertCircle, ShieldCheck, Pencil, Loader2,
-  Share2, RefreshCw
+  Share2, RefreshCw, Zap, ArrowRight, Play, Calculator, BarChart3, Layers, ChevronRight
 } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, LineChart, Line
 } from "recharts";
 import "./styles.css";
-import { app as firebaseApp, auth } from "./firebase.js";
+import "./landing.css";
+import MarketingLanding from "./components/LandingPage.jsx";
+import { createInvoicePdf } from "./services/pdfExport.js";
+import { auth, setWorkspaceSession } from "./firebase.js";
 import {
   signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
   signOut,
   onAuthStateChanged
 } from "firebase/auth";
 import {
-  seedFirestoreIfEmpty,
   subscribeToFirestore,
   saveStoreDoc,
   deleteStoreDoc,
@@ -34,7 +36,7 @@ import {
   deleteTaskDoc
 } from "./services/firestoreService.js";
 
-const uid = () => Math.random().toString(36).slice(2, 10);
+const uid = () => crypto.randomUUID();
 const money = (n) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(n || 0));
 
 function normalizeUpc(v = "") {
@@ -194,155 +196,25 @@ function resizeImageIfNeeded(file, maxDimension = 1600) {
   });
 }
 
-async function parseInvoiceDirectWithGemini(apiKey, files, storeProducts, onStatus) {
-  if (!apiKey || !apiKey.trim()) {
-    throw new Error("GEMINI_API_KEY is missing. Please set your Gemini API Key in Settings.");
-  }
-
-  if (onStatus) onStatus("Optimizing invoice image(s)...");
-
-  const optimizedFiles = await Promise.all(files.map(f => resizeImageIfNeeded(f)));
-
-  const filePromises = optimizedFiles.map(file => new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    const timer = setTimeout(() => reject(new Error(`Timeout reading file ${file.name}`)), 10000);
-    reader.onload = () => {
-      clearTimeout(timer);
-      const dataUrl = reader.result;
-      const base64 = dataUrl ? dataUrl.split(",")[1] : "";
-      let mimeType = file.type || "image/jpeg";
-      if (!file.type && file.name) {
-        const lower = file.name.toLowerCase();
-        if (lower.endsWith(".pdf")) mimeType = "application/pdf";
-        else if (lower.endsWith(".png")) mimeType = "image/png";
-        else if (lower.endsWith(".webp")) mimeType = "image/webp";
-      }
-      resolve({
-        inlineData: {
-          mimeType: mimeType,
-          data: base64
-        }
-      });
-    };
-    reader.onerror = () => {
-      clearTimeout(timer);
-      reject(new Error(`Failed to read file ${file.name}`));
-    };
-    reader.readAsDataURL(file);
-  }));
-
-  const inlineFiles = await Promise.all(filePromises);
-
-  const prompt = `
-You are Koko Invoice, a highly accurate retail and wholesale invoice extraction system.
-This request contains ${files.length} page(s)/image(s) of an invoice.
-
-Read every visible line item across all provided pages/images. Do not merge separate rows.
-Return monetary fields as numbers with no currency symbols.
-For UPCs, return digits only when a UPC is visible; otherwise return an empty string.
-"unitPrice" means the vendor invoice unit COST for one sellable/invoiced unit, not the extended total.
-"srp" means suggested retail price printed on the invoice. If no SRP is present, use 20% margin on the product.
-Analyze product descriptions to assign an accurate retail department category (especially for new products), such as Beverages, Candy & Snacks, Cigarettes, Cigarillos, Snuff, Beer, Wine, Grocery, Dairy & Ice Cream, Frozen Food, Household Supplies, Medicine, Smoke Shop, Automobile, Pet Foods, Fishing, Ice Bags, Pipe Tobacco Bag & Tubes, or Miscellaneous.
-If a date can be identified, normalize it to YYYY-MM-DD.
-Be conservative: never invent a UPC, price, invoice number, or vendor name.
-Return JSON matching this exact structure:
-{
-  "vendor": "string",
-  "invoiceNumber": "string",
-  "invoiceDate": "YYYY-MM-DD",
-  "subtotal": 0,
-  "tax": 0,
-  "total": 0,
-  "items": [
-    {
-      "description": "string",
-      "upc": "string",
-      "category": "string",
-      "quantity": 1,
-      "unitPrice": 0,
-      "srp": 0,
-      "lineTotal": 0
-    }
-  ]
-}
-`;
-
-  const contents = [
-    {
-      parts: [
-        { text: prompt },
-        ...inlineFiles
-      ]
-    }
-  ];
-
-  const models = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"];
-  let lastError = null;
-
-  for (const model of models) {
-    try {
-      if (onStatus) onStatus(`Extracting line items (${model})...`);
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey.trim())}`;
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents,
-          generationConfig: {
-            responseMimeType: "application/json"
-          }
-        })
-      });
-
-      const resData = await res.json();
-      if (!res.ok) {
-        throw new Error(resData.error?.message || `Gemini API error (${res.status})`);
-      }
-
-      const rawText = resData.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!rawText) throw new Error("No response text returned from Gemini AI.");
-
-      let cleanedText = rawText.trim();
-      if (cleanedText.startsWith("```")) {
-        cleanedText = cleanedText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-      }
-      const parsed = JSON.parse(cleanedText);
-      parsed.items = matchPriceBook(parsed.items || [], storeProducts);
-      return parsed;
-    } catch (err) {
-      lastError = err;
-      console.warn(`Model ${model} attempt failed:`, err.message);
-    }
-  }
-
-  throw lastError || new Error("Failed to process invoice with Gemini AI.");
-}
-
-async function testGeminiApiKeyDirect(apiKey) {
-  if (!apiKey || !apiKey.trim()) throw new Error("Please enter a Gemini API Key first.");
-  const models = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"];
-  let lastError = null;
-
-  for (const model of models) {
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey.trim())}`;
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: "Respond in JSON: {\"status\":\"ok\"}" }] }],
-          generationConfig: { responseMimeType: "application/json" }
-        })
-      });
-      const data = await res.json();
-      if (res.ok) return true;
-      lastError = new Error(data.error?.message || `API key test failed (${res.status})`);
-    } catch (err) {
-      lastError = err;
-    }
-  }
-
-  throw lastError || new Error("API key test failed.");
+async function parseInvoiceViaServer(files, storeProducts, onStatus) {
+  const currentUser = auth.currentUser;
+  if (!currentUser) throw new Error("Sign in to scan invoices. Demo users can use sample data.");
+  if (files.length > 5) throw new Error("Upload at most 5 files.");
+  if (files.reduce((sum, file) => sum + file.size, 0) > 20 * 1024 * 1024) throw new Error("Uploads must total 20 MB or less.");
+  const body = new FormData();
+  files.forEach(file => body.append("files", file));
+  onStatus?.("Extracting invoice items…");
+  const token = await currentUser.getIdToken();
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || ""}/api/parse-invoice`, {
+    method: "POST", headers: { Authorization: `Bearer ${token}` }, body,
+    signal: AbortSignal.timeout(75000)
+  });
+  if (!response.headers.get("content-type")?.includes("application/json")) throw new Error("Invoice scanning is not available yet. Please contact your workspace administrator.");
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || "Invoice processing failed.");
+  if (auth.currentUser?.uid !== currentUser.uid) throw new Error("Session changed. Please scan again.");
+  result.items = matchPriceBook(result.items || [], storeProducts);
+  return result;
 }
 
 const sampleSeedItems = [
@@ -387,175 +259,191 @@ const seed = {
   ]
 };
 
-function loadData() {
-  try {
-    const raw = localStorage.getItem("koko-invoice-data");
-    return raw ? { ...seed, ...JSON.parse(raw) } : seed;
-  } catch {
-    return seed;
-  }
-}
+const demoInvoiceItems = [
+  { id: 1, upc: "704361150243", itemCode: "95090", description: "GL MIDWEST IPA 4/6C", category: "Beer", quantity: 1, unitPrice: 10.99, srp: 38.38, posPrice: 38.38, lineTotal: 35.18, matchType: "exact", topPct: 3 },
+  { id: 2, upc: "704361888122", itemCode: "95258", description: "GL OKTOBERFEST 2/12C", category: "Beer", quantity: 1, unitPrice: 18.99, srp: 30.39, posPrice: 30.39, lineTotal: 30.39, matchType: "exact", topPct: 7 },
+  { id: 3, upc: "704361990245", itemCode: "95044", description: "GL OKTOBERFEST 4/6B", category: "Beer", quantity: 1, unitPrice: 10.99, srp: 38.38, posPrice: 38.38, lineTotal: 35.18, matchType: "exact", topPct: 11 },
+  { id: 4, upc: "083820123685", itemCode: "66015", description: "GUINNESS PUB 3/8 CAN 14.9OZ", category: "Beer", quantity: 0, unitPrice: 18.99, srp: 45.58, posPrice: 45.58, lineTotal: 0.00, matchType: "danger", note: "WHSE MISPICK", topPct: 15 },
+  { id: 5, upc: "083820123685", itemCode: "66015", description: "GUINNESS PUB 3/8 CAN 14.9OZ", category: "Beer", quantity: 0, unitPrice: 18.99, srp: 45.58, posPrice: 45.58, lineTotal: 0.00, matchType: "danger", note: "WHSE MISPICK", topPct: 19 },
+  { id: 6, upc: "083820123937", itemCode: "66017", description: "GUINNESS STOUT 4/6 11.2 OZ NR", category: "Beer", quantity: 0, unitPrice: 10.99, srp: 35.18, posPrice: 35.18, lineTotal: 0.00, matchType: "danger", note: "WHSE MISPICK", topPct: 23 },
+  { id: 7, upc: "850031116207", itemCode: "26624", description: "HAVE A DAY 12 OZ MIAMI VICE 3/8C", category: "Beverages", quantity: 4, unitPrice: 19.99, srp: 52.78, posPrice: 52.78, lineTotal: 191.92, matchType: "exact", topPct: 26 },
+  { id: 8, upc: "071990001568", itemCode: "32007", description: "KEYSTONE LIGHT APPLE 2/15 CAN", category: "Beer", quantity: 3, unitPrice: 12.99, srp: 21.59, posPrice: 21.59, lineTotal: 62.37, matchType: "exact", topPct: 30 },
+  { id: 9, upc: "689352009611", itemCode: "109330", description: "KIM CRAWFORD 750ML SAUV BLANC NC", category: "Wine", quantity: 3, unitPrice: 16.99, srp: 13.33, posPrice: 13.33, lineTotal: 33.99, matchType: "exact", topPct: 34 },
+  { id: 10, upc: "062067051623", itemCode: "40311", description: "LABATT BLUE 24 OZ CAN", category: "Beer", quantity: 0, unitPrice: 2.49, srp: 24.91, posPrice: 24.91, lineTotal: 0.00, matchType: "warning", note: "CUSTOMER REFUSED", topPct: 38 },
+  { id: 11, upc: "804467163168", itemCode: "14614", description: "MG FRANK CASTL 4/6 PK CAN", category: "Beer", quantity: 1, unitPrice: 11.99, srp: 38.38, posPrice: 38.38, lineTotal: 38.38, matchType: "exact", topPct: 41 },
+  { id: 12, upc: "754527000660", itemCode: "14347", description: "NB VR IPA 4/6 PK CAN", category: "Beer", quantity: 1, unitPrice: 10.99, srp: 35.18, posPrice: 35.18, lineTotal: 35.18, matchType: "exact", topPct: 45 },
+  { id: 13, upc: "754527011727", itemCode: "14851", description: "NB VR JU FORCE 4/6 PK CAN", category: "Beer", quantity: 1, unitPrice: 11.99, srp: 38.38, posPrice: 38.38, lineTotal: 38.38, matchType: "exact", topPct: 49 },
+  { id: 14, upc: "850005236566", itemCode: "17022", description: "RHINE BUBBLES IMPERI 15-19.2C", category: "Beer", quantity: 2, unitPrice: 2.99, srp: 35.93, posPrice: 35.93, lineTotal: 71.86, matchType: "exact", topPct: 53 },
+  { id: 15, upc: "860634000261", itemCode: "17014", description: "RHINE TRUTH 2/12 PK CAN", category: "Beer", quantity: 1, unitPrice: 19.99, srp: 31.99, posPrice: 31.99, lineTotal: 31.99, matchType: "exact", topPct: 57 },
+  { id: 16, upc: "082000782506", itemCode: "66055", description: "SMIR ICE RWB 4/6 NR", category: "Beverages", quantity: 1, unitPrice: 10.49, srp: 35.18, posPrice: 35.18, lineTotal: 33.58, matchType: "exact", topPct: 60 },
+  { id: 17, upc: "086788000906", itemCode: "113636", description: "SMITH & HOOK 750ML CAB SAUV", category: "Wine", quantity: 1, unitPrice: 19.99, srp: 239.95, posPrice: 239.95, lineTotal: 159.95, matchType: "exact", topPct: 64 },
+  { id: 18, upc: "853759000421", itemCode: "11195", description: "ST PUMKING 6/4 PK NR", category: "Beer", quantity: 2, unitPrice: 14.99, srp: 76.77, posPrice: 76.77, lineTotal: 143.94, matchType: "exact", topPct: 68 },
+  { id: 19, upc: "087692024132", itemCode: "26608", description: "SUN CRUISER-CS 12 OZ BLUEBERR 3/8 CN", category: "Beverages", quantity: 1, unitPrice: 17.99, srp: 64.78, posPrice: 64.78, lineTotal: 43.18, matchType: "exact", topPct: 72 },
+  { id: 20, upc: "087692024040", itemCode: "26591", description: "SUN CRUISER-CS 570ML CLASSIC TEA CN", category: "Beverages", quantity: 1, unitPrice: 3.49, srp: 31.53, posPrice: 31.53, lineTotal: 31.53, matchType: "exact", topPct: 76 },
+  { id: 21, upc: "087692021544", itemCode: "26282", description: "SUN CRUISER-CS 120Z LEMONAD VP3/8CN", category: "Beverages", quantity: 2, unitPrice: 17.99, srp: 64.78, posPrice: 64.78, lineTotal: 86.36, matchType: "exact", topPct: 79 },
+  { id: 22, upc: "087692024415", itemCode: "26565", description: "SUN CRUISER-CS 120Z SAMPLER 2/12C", category: "Beverages", quantity: 1, unitPrice: 26.99, srp: 63.99, posPrice: 63.99, lineTotal: 40.50, matchType: "exact", topPct: 83 },
+  { id: 23, upc: "087692022510", itemCode: "26561", description: "SUN CRUISER-CS 120Z TEA VAR 2/12C", category: "Beverages", quantity: 2, unitPrice: 26.99, srp: 63.99, posPrice: 63.99, lineTotal: 81.00, matchType: "exact", topPct: 87 },
+  { id: 24, upc: "085200000623", itemCode: "106028", description: "SUTTER GLASS 1.5 L MOSCATO", category: "Wine", quantity: 2, unitPrice: 11.99, srp: 10.67, posPrice: 10.67, lineTotal: 16.00, matchType: "warning", note: "MARGIN CHECK", topPct: 90 },
+  { id: 25, upc: "085200000685", itemCode: "105968", description: "SUTTER GLASS 1.5 L PINOT GRIGIO", category: "Wine", quantity: 3, unitPrice: 11.99, srp: 10.67, posPrice: 10.67, lineTotal: 24.00, matchType: "warning", note: "MARGIN CHECK", topPct: 93 },
+  { id: 26, upc: "085200718740", itemCode: "26009", description: "SUTTER SMAL-CS 4/PAK SAUVIGNON BLANC CASE", category: "Wine", quantity: 1, unitPrice: 7.99, srp: 39.97, posPrice: 39.97, lineTotal: 31.97, matchType: "exact", topPct: 96 }
+];
 
-function loadStoredUser() {
-  try {
-    const raw = localStorage.getItem("koko-auth-user");
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
+const emptyData = () => ({ stores: [], invoices: [], quotes: [], tasks: [] });
 
 function App() {
-  const [user, setUser] = useState(loadStoredUser);
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem("koko-gemini-api-key") || "");
-  const [data, setData] = useState(loadData);
+  const [user, setUser] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [data, setData] = useState(emptyData);
   const [page, setPage] = useState("Dashboard");
-  const [activeStoreId, setActiveStoreId] = useState(() => loadData().stores?.[0]?.id || "");
+  const [activeStoreId, setActiveStoreId] = useState("");
   const [toast, setToast] = useState("");
   const [preview, setPreview] = useState(null);
   const [firestoreConnected, setFirestoreConnected] = useState(false);
+  const [syncError, setSyncError] = useState("");
+  const [viewMode, setViewMode] = useState("landing");
 
-  // Listen to Firebase Auth state changes
-  useEffect(() => {
-    let unsubAuth = null;
-    try {
-      unsubAuth = onAuthStateChanged(auth, (fbUser) => {
-        if (fbUser) {
-          const u = {
-            uid: fbUser.uid,
-            email: fbUser.email,
-            displayName: fbUser.displayName || fbUser.email?.split("@")[0] || "User",
-            photoURL: fbUser.photoURL || null,
-            isDemo: false
-          };
-          setUser(u);
-          localStorage.setItem("koko-auth-user", JSON.stringify(u));
-        }
-      });
-    } catch (e) {
-      console.warn("Firebase auth listener error:", e);
-    }
-    return () => { if (unsubAuth) unsubAuth(); };
-  }, []);
+  const handleStartDemoSession = () => {
+    const demoUser = {
+      uid: "user-demo-guest",
+      email: "demo@kokoinvoice.com",
+      displayName: "Guest Store Admin",
+      isDemo: true
+    };
+    setUser(demoUser);
 
-  // Listen to Firestore updates
-  useEffect(() => {
-    let unsubscribe = null;
-    seedFirestoreIfEmpty().then(() => {
-      unsubscribe = subscribeToFirestore((cloudData) => {
-        setFirestoreConnected(true);
-        setData((prev) => {
-          let mergedStores = cloudData.stores || [];
-          if (prev.stores && prev.stores.length) {
-            const missingInCloud = prev.stores.filter(ps => !mergedStores.some(cs => cs.id === ps.id));
-            if (missingInCloud.length) {
-              mergedStores = [...mergedStores, ...missingInCloud];
-              missingInCloud.forEach(s => saveStoreDoc(s));
-            }
-          }
 
-          let mergedInvoices = cloudData.invoices || [];
-          if (prev.invoices && prev.invoices.length) {
-            const missingInCloud = prev.invoices.filter(pi => !mergedInvoices.some(ci => ci.id === pi.id));
-            if (missingInCloud.length) {
-              mergedInvoices = [...mergedInvoices, ...missingInCloud];
-              missingInCloud.forEach(inv => saveInvoiceDoc(inv));
-            }
-          }
-
-          let mergedQuotes = cloudData.quotes || [];
-          if (prev.quotes && prev.quotes.length) {
-            const missingInCloud = prev.quotes.filter(pq => !mergedQuotes.some(cq => cq.id === pq.id));
-            if (missingInCloud.length) {
-              mergedQuotes = [...mergedQuotes, ...missingInCloud];
-              missingInCloud.forEach(q => saveQuoteDoc(q));
-            }
-          }
-
-          let mergedTasks = cloudData.tasks || [];
-          if (prev.tasks && prev.tasks.length) {
-            const missingInCloud = prev.tasks.filter(pt => !mergedTasks.some(ct => ct.id === pt.id));
-            if (missingInCloud.length) {
-              mergedTasks = [...mergedTasks, ...missingInCloud];
-              missingInCloud.forEach(t => saveTaskDoc(t));
-            }
-          }
-
-          const nextData = {
-            stores: mergedStores.length ? mergedStores : prev.stores,
-            invoices: mergedInvoices,
-            quotes: mergedQuotes,
-            tasks: mergedTasks
-          };
-
-          try {
-            localStorage.setItem("koko-invoice-data", JSON.stringify(nextData));
-          } catch (e) {
-            console.error("localStorage save error:", e);
-          }
-
-          return nextData;
-        });
-      });
-    }).catch(err => {
-      console.error("Firestore init error:", err);
+    // Ensure sample invoice exists in state
+    setData(() => {
+      const prev = structuredClone(seed);
+      const exists = prev.invoices?.some(i => i.id === "INV-DEMO-2026");
+      if (exists) return prev;
+      const demoInv = {
+        id: "INV-DEMO-2026",
+        invoiceNumber: "95090-DIST-DEMO",
+        invoiceDate: new Date().toISOString().split("T")[0],
+        vendor: "Midwest Wholesale Beverage Co.",
+        storeId: activeStoreId || prev.stores?.[0]?.id || "s101",
+        subtotal: 1178.68,
+        tax: 0,
+        total: 1178.68,
+        status: "Completed",
+        createdAt: new Date().toISOString(),
+        items: demoInvoiceItems.map(it => ({
+          upc: it.upc,
+          description: it.description,
+          category: it.category,
+          quantity: it.quantity,
+          unitPrice: it.unitPrice,
+          srp: it.srp,
+          lineTotal: it.lineTotal,
+          matchedRetail: it.posPrice,
+          isPartialMatch: false,
+          matchType: it.matchType === "exact" ? "exact" : "none",
+          priceDifference: 0
+        }))
+      };
+      return {
+        ...prev,
+        invoices: [demoInv, ...(prev.invoices || [])]
+      };
     });
 
-    return () => {
-      if (unsubscribe) unsubscribe();
-    };
+    setViewMode("app");
+    notify("Demo workspace loaded! Exploring parsed demo invoice.");
+  };
+
+  useEffect(() => {
+    try { ["koko-auth-user", "koko-gemini-api-key", "koko-invoice-data"].forEach(key => localStorage.removeItem(key)); } catch {}
+    return onAuthStateChanged(auth, async fbUser => {
+      setWorkspaceSession(null);
+      setUser(null);
+      setData(emptyData());
+      setPreview(null);
+      setAuthReady(false);
+      let workspace = null;
+      if (fbUser) {
+        try {
+          const token = await fbUser.getIdTokenResult();
+          if (auth.currentUser?.uid !== fbUser.uid) return;
+          if (token.claims.kokoAccess !== true || !token.claims.companyId || !["owner", "admin", "staff", "viewer"].includes(token.claims.role)) {
+            await signOut(auth);
+            setToast("This account has not been invited to Koko Invoice.");
+            return;
+          }
+          workspace = { uid: fbUser.uid, companyId: token.claims.companyId, role: token.claims.role };
+          setWorkspaceSession(workspace);
+        } catch { await signOut(auth); return; }
+      }
+      setUser(fbUser ? { uid: fbUser.uid, email: fbUser.email, displayName: fbUser.displayName, ...workspace } : null);
+      setData(emptyData());
+      setPreview(null);
+      setPage("Dashboard");
+      setActiveStoreId("");
+      setFirestoreConnected(false);
+      setSyncError("");
+      setViewMode(fbUser ? "app" : "landing");
+      setAuthReady(true);
+    });
   }, []);
+
+  useEffect(() => {
+    if (!user || user.isDemo) return;
+    let active = true;
+    const unsubscribe = subscribeToFirestore(user.companyId, cloudData => {
+      if (!active || auth.currentUser?.uid !== user.uid) return;
+      setData(cloudData);
+      setActiveStoreId(current => cloudData.stores.some(store => store.id === current) ? current : cloudData.stores[0]?.id || "");
+      setFirestoreConnected(true);
+      setSyncError("");
+    }, () => { setFirestoreConnected(false); setSyncError("Unable to sync your workspace. Check your connection and reload before editing."); });
+    return () => { active = false; unsubscribe(); };
+  }, [user?.uid, user?.companyId]);
 
   const save = async (next) => {
     const prev = data;
+    if (user?.isDemo) { setData(next); return true; }
+    if (user?.role === "viewer") { notify("Your role has read-only access."); return false; }
+    if (!user || auth.currentUser?.uid !== user.uid || !firestoreConnected || syncError) {
+      setSyncError("Workspace is not ready. Please wait for your data to load."); return false;
+    }
     setData(next);
-    localStorage.setItem("koko-invoice-data", JSON.stringify(next));
 
     try {
       const promises = [];
       if (next.stores) {
-        promises.push(...next.stores.map(s => saveStoreDoc(s)));
+        promises.push(...next.stores.filter(item => !prev.stores.some(old => old.id === item.id && JSON.stringify(old) === JSON.stringify(item))).map(s => saveStoreDoc(s)));
         if (prev.stores) {
           const removed = prev.stores.filter(ps => !next.stores.some(ns => ns.id === ps.id));
           promises.push(...removed.map(rs => deleteStoreDoc(rs.id)));
         }
       }
       if (next.invoices) {
-        promises.push(...next.invoices.map(inv => saveInvoiceDoc(inv)));
+        promises.push(...next.invoices.filter(item => !prev.invoices.some(old => old.id === item.id && JSON.stringify(old) === JSON.stringify(item))).map(inv => saveInvoiceDoc(inv)));
         if (prev.invoices) {
           const removed = prev.invoices.filter(pi => !next.invoices.some(ni => ni.id === pi.id));
           promises.push(...removed.map(ri => deleteInvoiceDoc(ri.id)));
         }
       }
       if (next.quotes) {
-        promises.push(...next.quotes.map(q => saveQuoteDoc(q)));
+        promises.push(...next.quotes.filter(item => !prev.quotes.some(old => old.id === item.id && JSON.stringify(old) === JSON.stringify(item))).map(q => saveQuoteDoc(q)));
         if (prev.quotes) {
           const removed = prev.quotes.filter(pq => !next.quotes.some(nq => nq.id === pq.id));
           promises.push(...removed.map(rq => deleteQuoteDoc(rq.id)));
         }
       }
       if (next.tasks) {
-        promises.push(...next.tasks.map(t => saveTaskDoc(t)));
+        promises.push(...next.tasks.filter(item => !prev.tasks.some(old => old.id === item.id && JSON.stringify(old) === JSON.stringify(item))).map(t => saveTaskDoc(t)));
         if (prev.tasks) {
           const removed = prev.tasks.filter(pt => !next.tasks.some(nt => nt.id === pt.id));
           promises.push(...removed.map(rt => deleteTaskDoc(rt.id)));
         }
       }
       await Promise.all(promises);
+      return true;
     } catch (err) {
-      console.error("Error saving to Firestore:", err);
-    }
-  };
-
-  const saveApiKey = (key) => {
-    const trimmed = (key || "").trim();
-    setApiKey(trimmed);
-    if (trimmed) {
-      localStorage.setItem("koko-gemini-api-key", trimmed);
-      notify("API Key saved successfully.");
-    } else {
-      localStorage.removeItem("koko-gemini-api-key");
-      notify("API Key cleared.");
+      console.error("Workspace save failed", err.code);
+      if (auth.currentUser?.uid === user.uid) setSyncError("Your changes could not be saved. Reload to recover the saved workspace before editing again.");
+      return false;
     }
   };
 
@@ -563,10 +451,14 @@ function App() {
     try {
       await signOut(auth);
     } catch (e) {
-      console.warn("Sign out fallback:", e);
+      setSyncError("Sign out failed. Please try again.");
+      return;
     }
     setUser(null);
-    localStorage.removeItem("koko-auth-user");
+    setData(emptyData());
+    setPreview(null);
+    setPage("Dashboard");
+    setViewMode("landing");
     notify("Logged out successfully.");
   };
 
@@ -584,60 +476,88 @@ function App() {
     ["Settings", Settings]
   ];
 
-  // If user is not logged in, render the Login Page
+  if (!authReady) return <MarketingLanding />;
+
+  if (viewMode === "landing") {
+    return (
+      <LandingPage
+        onStartDemo={handleStartDemoSession}
+        onLoginSuccess={(u) => {
+          setViewMode("app");
+          notify(`Welcome back, ${u.displayName || u.email}!`);
+        }}
+      />
+    );
+  }
+
   if (!user) {
     return (
       <LoginPage
         onLogin={(u) => {
-          setUser(u);
-          localStorage.setItem("koko-auth-user", JSON.stringify(u));
+          setViewMode("app");
           notify(`Welcome back, ${u.displayName || u.email}!`);
         }}
-        notify={notify}
-        apiKey={apiKey}
-        saveApiKey={saveApiKey}
       />
     );
   }
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <img src="/logo.png" alt="Koko Invoice Logo" className="brand-logo-img" />
-          <div><b>Koko Invoice</b><span>Retail Intelligence</span></div>
+    <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
+      {user?.isDemo && (
+        <div className="demo-mode-strip">
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Sparkles size={16} />
+            <span><strong>Interactive Demo Workspace</strong> — Exploring live distributor invoice sample (26 items extracted & matched)</span>
+          </div>
+          <button onClick={() => setViewMode("landing")}>Return to Landing Page</button>
         </div>
+      )}
 
-        <nav>
-          {nav.map(([label, Icon]) => (
-            <button key={label} className={page === label ? "nav-item active" : "nav-item"} onClick={() => setPage(label)}>
-              <Icon size={18} /><span>{label}</span>
-              {label === "Settings" && !apiKey && <span className="dot-badge" title="API Key not configured" />}
-            </button>
-          ))}
-        </nav>
-
-        <div className="sidebar-footer">
-          <div className="user-profile-card">
-            <div className="user-avatar">{user.displayName ? user.displayName[0].toUpperCase() : "U"}</div>
-            <div className="user-info">
-              <strong>{user.displayName || "Store Admin"}</strong>
-              <span>{user.email || "demo@kokoinvoice.com"}</span>
-            </div>
-            <button className="icon-btn logout-btn" title="Sign out" onClick={handleLogout}>
-              <LogOut size={16} />
-            </button>
+      <div className="app-shell">
+        <aside className="sidebar">
+          <div className="brand">
+            <img src="/logo.png" alt="Koko Invoice Logo" className="brand-logo-img" />
+            <div><b>Koko Invoice</b><span>Retail Intelligence</span></div>
           </div>
 
-          <div className="mini-card" style={{ marginTop: 10 }}>
-            <Sparkles size={18} />
-            <div>
-              <strong>Firestore {firestoreConnected ? "Live" : "Syncing..."}</strong>
-              <span>Price Books & Ledger DB</span>
+          <nav>
+            {nav.map(([label, Icon]) => (
+              <button key={label} className={page === label ? "nav-item active" : "nav-item"} onClick={() => setPage(label)}>
+                <Icon size={18} /><span>{label}</span>
+
+              </button>
+            ))}
+          </nav>
+
+          <div className="sidebar-footer">
+            <div className="user-profile-card">
+              <div className="user-avatar">{user.displayName ? user.displayName[0].toUpperCase() : "U"}</div>
+              <div className="user-info">
+                <strong>{user.displayName || "Store Admin"}</strong>
+                <span>{user.email || "demo@kokoinvoice.com"}</span>
+              </div>
+              <button className="icon-btn logout-btn" title="Sign out" onClick={handleLogout}>
+                <LogOut size={16} />
+              </button>
+            </div>
+
+            <button
+              className="secondary"
+              style={{ width: "100%", marginTop: 10, fontSize: 12, display: "flex", gap: 6, alignItems: "center", justifyContent: "center" }}
+              onClick={() => setViewMode("landing")}
+            >
+              <Layers size={14} /> Back to Landing Page
+            </button>
+
+            <div className="mini-card" style={{ marginTop: 10 }}>
+              <Sparkles size={18} />
+              <div>
+                <strong>Firestore {firestoreConnected ? "Live" : "Syncing..."}</strong>
+                <span>Price Books & Ledger DB</span>
+              </div>
             </div>
           </div>
-        </div>
-      </aside>
+        </aside>
 
       <main>
         <header className="topbar">
@@ -651,8 +571,8 @@ function App() {
             </select>
             <button className="ghost settings-quick-btn" onClick={() => setPage("Settings")} title="API Key & Settings">
               <Key size={16} />
-              <span className={apiKey ? "key-status-text active" : "key-status-text missing"}>
-                {apiKey ? "API Key Set" : "Add API Key"}
+              <span className="key-status-text active">
+                Server-managed AI
               </span>
             </button>
             <button className="primary" onClick={() => setPage("AI Parser")}><UploadCloud size={17} /> Scan invoice</button>
@@ -660,200 +580,70 @@ function App() {
         </header>
 
         <section className="content">
+          {user.role === "viewer" && <p role="status">You have read-only access to this company workspace.</p>}
+          {syncError && <div role="alert" className="auth-alert error">{syncError}</div>}
           {page === "Dashboard" && <Dashboard data={data} activeStore={activeStore} save={save} setPage={setPage} />}
-          {page === "AI Parser" && <AIParser data={data} save={save} activeStore={activeStore} notify={notify} setPreview={setPreview} apiKey={apiKey} setPage={setPage} />}
+          {page === "AI Parser" && <AIParser data={data} save={save} activeStore={activeStore} notify={notify} setPreview={setPreview} setPage={setPage} />}
           {page === "Price Books" && <PriceBooks data={data} save={save} activeStore={activeStore} activeStoreId={activeStoreId} setActiveStoreId={setActiveStoreId} notify={notify} />}
           {page === "Invoices" && <Invoices data={data} save={save} setPreview={setPreview} />}
           {page === "Quotes" && <Quotes data={data} save={save} />}
           {page === "Tasks" && <Tasks data={data} save={save} />}
-          {page === "Settings" && <SettingsView user={user} apiKey={apiKey} saveApiKey={saveApiKey} notify={notify} handleLogout={handleLogout} />}
+          {page === "Settings" && <SettingsView user={user} notify={notify} handleLogout={handleLogout} />}
         </section>
       </main>
 
       {toast && <div className="toast">{toast}</div>}
       {preview && <InvoicePreview invoice={preview} stores={data.stores} activeStore={activeStore} onClose={() => setPreview(null)} />}
     </div>
-  );
-}
-
-async function verifyPasscodeHash(inputCode) {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(inputCode.trim());
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  const hashHex = hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
-  return hashHex === "a20a2b7bb0842d5cf8a0c06c626421fd51ec103925c1819a51271f2779afa730";
+  </div>
+);
 }
 
 function LoginPage({ onLogin }) {
-  const [code, setCode] = useState("");
-  const [showCode, setShowCode] = useState(false);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError("");
-    const isValid = await verifyPasscodeHash(code);
-    if (isValid) {
-      onLogin({
-        uid: "user-2005",
-        email: "admin@kokoinvoice.com",
-        displayName: "Store Admin",
-        isDemo: true
-      });
-    } else {
-      setError("Incorrect passcode. Please try again.");
-    }
-  };
-
-  return (
-    <div className="login-wrapper">
-      <div className="login-card">
-        <div className="login-header">
-          <div className="login-brand-icon">
-            <img src="/logo.png" alt="Koko Invoice Logo" className="login-logo-img" />
-          </div>
-          <h2>Koko Invoice</h2>
-          <p>Enter access passcode to unlock workspace</p>
-        </div>
-
-        {error && (
-          <div className="auth-alert error">
-            <AlertCircle size={16} />
-            <span>{error}</span>
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="auth-form">
-          <div className="auth-field">
-            <label>Access Passcode</label>
-            <div className="input-icon-wrap large">
-              <Lock size={18} />
-              <input
-                type={showCode ? "text" : "password"}
-                placeholder="Enter passcode"
-                value={code}
-                onChange={(e) => { setCode(e.target.value); setError(""); }}
-                autoFocus
-                required
-              />
-              <button
-                type="button"
-                className="toggle-pass-btn"
-                onClick={() => setShowCode(!showCode)}
-              >
-                {showCode ? <EyeOff size={16} /> : <Eye size={16} />}
-              </button>
-            </div>
-          </div>
-
-          <button type="submit" className="primary auth-submit-btn">
-            Unlock Workspace
-          </button>
-        </form>
-
-        <div className="login-footer-note">
-          <ShieldCheck size={14} />
-          <span>Protected Passcode Workspace</span>
-        </div>
-      </div>
-    </div>
-  );
+  const [busy, setBusy] = useState(false);
+  async function submit(event) {
+    event.preventDefault(); setBusy(true); setError("");
+    try {
+      const result = await signInWithEmailAndPassword(auth, email.trim(), password);
+      const token = await result.user.getIdTokenResult();
+      if (token.claims.kokoAccess !== true || !token.claims.companyId || !["owner", "admin", "staff", "viewer"].includes(token.claims.role)) { await signOut(auth); throw new Error(); }
+      onLogin?.(result.user);
+    } catch { setError("Unable to sign in. Check your email and password, or contact the workspace administrator for access."); }
+    finally { setBusy(false); }
+  }
+  return <div className="login-wrapper"><div className="login-card">
+    <h2>Sign in to Koko Invoice</h2>
+    <form onSubmit={submit} className="auth-form">
+      <label>Email<input type="email" autoComplete="username" value={email} onChange={e => setEmail(e.target.value)} required /></label>
+      <label>Password<input type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} required /></label>
+      {error && <p role="alert">{error}</p>}
+      <button className="primary auth-submit-btn" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
+      <button type="button" className="secondary" disabled={busy || !email.trim()} onClick={async () => {
+        setBusy(true);
+        try { await sendPasswordResetEmail(auth, email.trim()); } catch {}
+        setError("If this email has an account, a password reset email will arrive shortly.");
+        setBusy(false);
+      }}>Reset password</button>
+    </form>
+  </div></div>;
 }
 
-function SettingsView({ user, apiKey, saveApiKey, notify, handleLogout }) {
-  const [keyInput, setKeyInput] = useState(apiKey || "");
-  const [showKey, setShowKey] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState(null);
+function LandingPage({ onStartDemo, onLoginSuccess }) {
+  const [showLogin, setShowLogin] = useState(false);
+  return <><MarketingLanding onStartDemo={onStartDemo} onSignIn={() => setShowLogin(true)} />
+    {showLogin && <Modal title="Sign in to your workspace" onClose={() => setShowLogin(false)}>
+      <LoginPage onLogin={user => { setShowLogin(false); onLoginSuccess(user); }} />
+    </Modal>}
+  </>;
+}
 
-  useEffect(() => {
-    setKeyInput(apiKey || "");
-  }, [apiKey]);
-
-  const handleSave = (e) => {
-    e.preventDefault();
-    saveApiKey(keyInput);
-    setTestResult(null);
-  };
-
-  const handleTestKey = async () => {
-    setTesting(true);
-    setTestResult(null);
-    try {
-      await testGeminiApiKeyDirect(keyInput);
-      setTestResult({ ok: true, msg: "Gemini API Key verified & active!" });
-    } catch (err) {
-      setTestResult({ ok: false, msg: err.message || "Failed to verify API key." });
-    } finally {
-      setTesting(false);
-    }
-  };
-
+function SettingsView({ user, handleLogout }) {
   return (
     <div className="settings-page">
-      <div className="panel settings-panel">
-        <div className="panel-title">
-          <div>
-            <h3><Key size={18} style={{ verticalAlign: "middle", marginRight: 8 }} />Gemini API Key Configuration</h3>
-            <p>Enter your Google Gemini API key to enable instant multi-page AI invoice scanning.</p>
-          </div>
-          <div className={`key-badge ${apiKey ? "active" : "inactive"}`}>
-            {apiKey ? <CheckCircle2 size={15} /> : <AlertCircle size={15} />}
-            <span>{apiKey ? "Custom Key Configured" : "Server Env / Missing Key"}</span>
-          </div>
-        </div>
-
-        <form onSubmit={handleSave} className="settings-form">
-          <div className="field">
-            <label>API Key</label>
-            <div className="input-icon-wrap large">
-              <Key size={18} />
-              <input
-                type={showKey ? "text" : "password"}
-                placeholder="Paste your Gemini API key (AIzaSy...)"
-                value={keyInput}
-                onChange={(e) => setKeyInput(e.target.value)}
-              />
-              <button
-                type="button"
-                className="toggle-pass-btn"
-                onClick={() => setShowKey(!showKey)}
-              >
-                {showKey ? <EyeOff size={17} /> : <Eye size={17} />}
-              </button>
-            </div>
-            <small className="field-help">
-              Don't have a key? Get one for free from {" "}
-              <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer">
-                Google AI Studio
-              </a>.
-            </small>
-          </div>
-
-          <div className="settings-actions">
-            <button type="submit" className="primary">
-              <Check size={16} /> Save Key
-            </button>
-            <button type="button" className="secondary" onClick={handleTestKey} disabled={testing}>
-              {testing ? "Testing..." : "Test Connection"}
-            </button>
-            {apiKey && (
-              <button type="button" className="danger-btn" onClick={() => { setKeyInput(""); saveApiKey(""); }}>
-                <Trash2 size={16} /> Clear Key
-              </button>
-            )}
-          </div>
-        </form>
-
-        {testResult && (
-          <div className={`test-result-box ${testResult.ok ? "success" : "error"}`}>
-            {testResult.ok ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
-            <span>{testResult.msg}</span>
-          </div>
-        )}
-      </div>
-
+      <div className="panel settings-panel"><h3>Invoice scanning</h3><p>AI scanning is managed securely by the server. Sign in to scan your invoices.</p></div>
       <div className="panel settings-panel">
         <div className="panel-title">
           <div>
@@ -872,8 +662,8 @@ function SettingsView({ user, apiKey, saveApiKey, notify, handleLogout }) {
             <strong className="value">{user?.email || "N/A"}</strong>
           </div>
           <div className="detail-item">
-            <span className="label">Account ID</span>
-            <span className="value mono">{user?.uid || "Local Session"}</span>
+            <span className="label">Company & Role</span>
+            <span className="value mono">{user?.companyId || "Demo"} · {user?.role || "Guest"}</span>
           </div>
           <div className="detail-item">
             <span className="label">Session Mode</span>
@@ -960,7 +750,7 @@ function Stat({ icon: Icon, label, value, note }) {
   </div>;
 }
 
-function AIParser({ data, save, activeStore, notify, setPreview, apiKey, setPage }) {
+function AIParser({ data, save, activeStore, notify, setPreview, setPage }) {
   const [files, setFiles] = useState([]);
   const [drag, setDrag] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -1068,17 +858,11 @@ function AIParser({ data, save, activeStore, notify, setPreview, apiKey, setPage
 
   const parse = async () => {
     if (!files.length) return notify("Choose one or more invoice images or PDFs first.");
-    if (!apiKey) {
-      notify("Gemini API key is required. Please set your API Key in Settings.");
-      if (setPage) setPage("Settings");
-      return;
-    }
     setLoading(true);
     setStatusText("Optimizing image(s)...");
     setErrorText("");
     try {
-      const result = await parseInvoiceDirectWithGemini(
-        apiKey,
+      const result = await parseInvoiceViaServer(
         files,
         activeStore?.products || [],
         (msg) => setStatusText(msg)
@@ -1087,21 +871,17 @@ function AIParser({ data, save, activeStore, notify, setPreview, apiKey, setPage
       notify(`Invoice parsed (${files.length} page${files.length > 1 ? "s" : ""}).`);
     } catch (e) {
       setErrorText(e.message || "Failed to parse invoice with Gemini AI.");
-      if (e.message && e.message.includes("GEMINI_API_KEY")) {
-        notify("Gemini API key is required. Please set it in Settings.");
-        if (setPage) setPage("Settings");
-      } else {
-        notify(e.message);
-      }
+      notify(e.message);
     } finally {
       setLoading(false);
       setStatusText("");
     }
   };
 
-  const saveInvoice = () => {
+  const saveInvoice = async () => {
     if (!parsed) return;
-    const rawId = (parsed.invoiceNumber || `INV-${Date.now().toString().slice(-5)}`).trim();
+    if (!activeStore) return notify("Create a price book before saving an invoice.");
+    const rawId = `${parsed.invoiceNumber || "INV"}-${uid()}`;
     const safeId = rawId.replace(/[/]/g, "-");
     const inv = {
       id: safeId,
@@ -1113,7 +893,7 @@ function AIParser({ data, save, activeStore, notify, setPreview, apiKey, setPage
       items: parsed.items?.length || 0,
       detail: parsed
     };
-    save({ ...data, invoices: [inv, ...data.invoices.filter(i => i.id !== inv.id)] });
+    if (!await save({ ...data, invoices: [inv, ...data.invoices] })) return;
     notify("Invoice saved to ledger.");
     setPreview(inv);
   };
@@ -1169,15 +949,7 @@ function AIParser({ data, save, activeStore, notify, setPreview, apiKey, setPage
           <h3 style={{ color: "#ef4444" }}>Invoice Scan Failed</h3>
           <p style={{ color: "#94a3b8", maxWidth: 400, textAlign: "center" }}>{errorText}</p>
           <div style={{ marginTop: 14, display: "flex", gap: 10 }}>
-            {!apiKey ? (
-              <button className="primary" onClick={() => setPage && setPage("Settings")}>
-                Configure Gemini Key in Settings
-              </button>
-            ) : (
-              <button className="secondary" onClick={parse}>
-                Try Scan Again
-              </button>
-            )}
+            <button className="secondary" onClick={parse}>Try Scan Again</button>
             <button className="ghost" onClick={handleLoadSampleInvoice}>
               Use Sample Data
             </button>
@@ -1200,14 +972,14 @@ function AIParser({ data, save, activeStore, notify, setPreview, apiKey, setPage
           </div>
           <div className="table-wrap result-table">
             <table>
-              <thead><tr><th>UPC</th><th>Description</th><th>Category</th><th>Cost</th><th>POS</th><th>Diff</th></tr></thead>
+              <thead><tr><th>UPC</th><th>Description</th><th>Cost</th><th>POS</th><th>Diff</th></tr></thead>
               <tbody>{(parsed.items || []).map((item, i) => {
                 const isMatched = item.matchedRetail != null;
                 const isPartial = item.isPartialMatch || item.matchType === "partial";
                 const diff = Number(item.priceDifference || 0);
                 const rowClass = isPartial ? "partial-upc-match" : !isMatched ? "not-in-pricebook" : "";
                 return <tr key={i} className={rowClass}>
-                  <td className="mono">{item.upc || "—"}</td><td><b>{item.description || "Unknown"}</b></td><td>{item.category || "Misc"}</td>
+                  <td className="mono">{item.upc || "—"}</td><td><b>{item.description || "Unknown"}</b></td>
                   <td>{money(item.unitPrice)}</td><td>{isMatched ? money(item.matchedRetail) : "—"}</td>
                   <td className={diff > 0 ? "negative" : diff < 0 ? "positive" : ""}>{diff === 0 ? "—" : `${diff > 0 ? "+" : ""}${money(diff)}`}</td>
                 </tr>
@@ -1241,7 +1013,7 @@ function PriceBooks({ data, save, activeStore, activeStoreId, setActiveStoreId, 
     setShowAddModal(true);
   };
 
-  const handleCreateStore = (e) => {
+  const handleCreateStore = async (e) => {
     e?.preventDefault();
     if (!newStoreName.trim()) return;
     const s = {
@@ -1250,7 +1022,7 @@ function PriceBooks({ data, save, activeStore, activeStoreId, setActiveStoreId, 
       location: newStoreLocation.trim() || "Main Location",
       products: []
     };
-    save({ ...data, stores: [...data.stores, s] });
+    if (!await save({ ...data, stores: [...data.stores, s] })) return;
     setActiveStoreId(s.id);
     setShowAddModal(false);
     notify(`Created price book "${s.name}".`);
@@ -1263,13 +1035,13 @@ function PriceBooks({ data, save, activeStore, activeStoreId, setActiveStoreId, 
     setShowEditModal(true);
   };
 
-  const handleSaveEditStore = (e) => {
+  const handleSaveEditStore = async (e) => {
     e?.preventDefault();
     if (!editStoreName.trim() || !activeStore) return;
     const updatedName = editStoreName.trim();
     const updatedLocation = editStoreLocation.trim() || "Main Location";
     const stores = data.stores.map(s => s.id === activeStore.id ? { ...s, name: updatedName, location: updatedLocation } : s);
-    save({ ...data, stores });
+    if (!await save({ ...data, stores })) return;
     setShowEditModal(false);
     notify(`Renamed price book to "${updatedName}".`);
   };
@@ -1313,46 +1085,49 @@ function PriceBooks({ data, save, activeStore, activeStoreId, setActiveStoreId, 
 
   const handleReplaceCsv = (file) => {
     if (!file || !activeStore) return;
+    if (file.size > 10 * 1024 * 1024) return notify("CSV files must be 10 MB or smaller.");
     Papa.parse(file, {
       header: false,
       skipEmptyLines: true,
-      complete: ({ data: rawRows }) => {
+      complete: async ({ data: rawRows }) => {
         if (!rawRows || !rawRows.length) return notify("CSV file was empty.");
         const products = parseCsvProducts(rawRows);
         const stores = data.stores.map(s => s.id === activeStoreId ? { ...s, products } : s);
-        save({ ...data, stores });
+        if (!await save({ ...data, stores })) return;
         notify(`Replaced price book for "${activeStore.name}" with ${products.length} latest products.`);
       }
     });
   };
 
   const importCsv = (file) => {
+    if (!file || !activeStore) return notify("Create a price book first.");
+    if (file.size > 10 * 1024 * 1024) return notify("CSV files must be 10 MB or smaller.");
     Papa.parse(file, {
       header: false,
       skipEmptyLines: true,
-      complete: ({ data: rawRows }) => {
+      complete: async ({ data: rawRows }) => {
         if (!rawRows || !rawRows.length) return notify("CSV file was empty.");
         const products = parseCsvProducts(rawRows);
         const stores = data.stores.map(s => s.id === activeStoreId ? { ...s, products: [...(s.products || []), ...products] } : s);
-        save({ ...data, stores });
+        if (!await save({ ...data, stores })) return;
         notify(`Added ${products.length} products to ${activeStore?.name || "store"}.`);
       }
     });
   };
 
-  const clear = () => {
+  const clear = async () => {
     if (!activeStore) return;
-    save({ ...data, stores: data.stores.map(s => s.id === activeStore.id ? { ...s, products: [] } : s) });
+    if (!await save({ ...data, stores: data.stores.map(s => s.id === activeStore.id ? { ...s, products: [] } : s) })) return;
     notify(`Cleared items in ${activeStore.name}.`);
   };
 
-  const deletePriceBook = () => {
+  const deletePriceBook = async () => {
     if (data.stores.length <= 1) {
       return notify("You must keep at least one price book.");
     }
     const name = activeStore.name;
     const remaining = data.stores.filter(s => s.id !== activeStore.id);
-    save({ ...data, stores: remaining });
+    if (!await save({ ...data, stores: remaining })) return;
     setActiveStoreId(remaining[0].id);
     notify(`Deleted price book "${name}".`);
   };
@@ -1534,7 +1309,7 @@ function InvoiceTable({ invoices, stores = [], compact, onOpen, onStatus }) {
         <td><b>{inv.vendor}</b></td>
         <td>{inv.date}</td>
         <td><span className="tag pricebook" style={{ fontSize: "10px", fontWeight: 600 }}>{storeName}</span></td>
-        <td>{inv.items || 0}</td>
+        <td>{Array.isArray(inv.items) ? inv.items.length : inv.items || 0}</td>
         <td>{onStatus ? <select className={`status ${inv.status.toLowerCase()}`} value={inv.status} onChange={e => onStatus(inv.id, e.target.value)}><option>Working</option><option>Done</option></select> : <span className={`status ${inv.status.toLowerCase()}`}>{inv.status}</span>}</td>
         <td><b>{money(inv.total)}</b></td>
         {!compact && <td><button className="icon-btn" onClick={() => onOpen(inv)}><MoreHorizontal size={18} /></button></td>}
@@ -1546,7 +1321,7 @@ function InvoiceTable({ invoices, stores = [], compact, onOpen, onStatus }) {
 function Quotes({ data, save }) {
   const [show, setShow] = useState(false);
   const [form, setForm] = useState({ client: "", vendor: "", amount: "", date: new Date().toISOString().slice(0, 10) });
-  const add = () => { if (!form.vendor) return; save({ ...data, quotes: [{ id: `Q-${Date.now().toString().slice(-4)}`, status: "Open", ...form, amount: Number(form.amount || 0) }, ...data.quotes] }); setShow(false); };
+  const add = () => { if (!form.vendor) return; save({ ...data, quotes: [{ id: `Q-${uid()}`, status: "Open", ...form, amount: Number(form.amount || 0) }, ...data.quotes] }); setShow(false); };
   return <>
     <div className="panel">
       <div className="panel-title"><div><h3>Quotes</h3><p>Track vendor and client pricing proposals.</p></div><button className="primary" onClick={() => setShow(true)}><Plus size={16} /> New quote</button></div>
@@ -1634,7 +1409,7 @@ function BarcodeGtin14({ upc }) {
 }
 
 function InvoicePreview({ invoice, stores = [], activeStore, onClose }) {
-  const detail = invoice.detail || {};
+  const detail = invoice.detail || (Array.isArray(invoice.items) ? { items: invoice.items } : {});
   const storeId = invoice.storeId || activeStore?.id;
   const targetStore = (stores || []).find(s => s.id === storeId) || activeStore || (stores || [])[0];
   const storeProducts = targetStore?.products || [];
@@ -1675,14 +1450,7 @@ function InvoicePreview({ invoice, stores = [], activeStore, onClose }) {
       let pdfFile = null;
 
       if (printContainerRef.current) {
-        const opt = {
-          margin: [8, 8, 8, 8],
-          filename: fileName,
-          image: { type: "jpeg", quality: 0.98 },
-          html2canvas: { scale: 2, useCORS: true, logging: false },
-          jsPDF: { unit: "mm", format: "a4", orientation: "portrait" }
-        };
-        const pdfBlob = await html2pdf().set(opt).from(printContainerRef.current).output("blob");
+        const pdfBlob = await createInvoicePdf(printContainerRef.current, fileName);
         pdfFile = new File([pdfBlob], fileName, { type: "application/pdf" });
       }
 
@@ -1729,7 +1497,7 @@ function InvoicePreview({ invoice, stores = [], activeStore, onClose }) {
     }
   };
 
-  return <div className="modal-backdrop">
+  return createPortal(<div className="modal-backdrop invoice-preview-backdrop">
     <div className="preview-modal">
       <div className="preview-toolbar">
         <div><b>Koko Invoice Preview</b><span>{invoice.id}</span></div>
@@ -1743,11 +1511,11 @@ function InvoicePreview({ invoice, stores = [], activeStore, onClose }) {
         </div>
       </div>
 
-      <div ref={printContainerRef}>
+      <div ref={printContainerRef} className="invoice-document">
         <div className="print-sheet">
           <div className="invoice-head"><div><img src="/logo.png" alt="Koko Logo" style={{ width: 44, height: 44, objectFit: "contain", borderRadius: 8 }} /><h2>Koko Invoice</h2></div><div><span>INVOICE</span><strong>{invoice.id}</strong></div></div>
           <div className="invoice-meta"><div><small>VENDOR</small><b>{invoice.vendor}</b></div><div><small>DATE</small><b>{invoice.date}</b></div><div><small>STORE</small><b>{targetStore?.name || "Store"}</b></div><div><small>TOTAL</small><b>{money(invoice.total)}</b></div></div>
-          {items.length ? <table className="print-table"><thead><tr><th>UPC</th><th>Description</th><th>Dept</th><th>Qty</th><th>SRP</th><th>POS</th><th>L/P</th></tr></thead><tbody>{items.map((it, i) => {
+          {items.length ? <table className="print-table"><colgroup><col style={{ width: "21%" }} /><col style={{ width: "35%" }} /><col style={{ width: "8%" }} /><col style={{ width: "12%" }} /><col style={{ width: "12%" }} /><col style={{ width: "12%" }} /></colgroup><thead><tr><th>UPC</th><th>Description</th><th>Qty</th><th>SRP</th><th>POS</th><th>L/P</th></tr></thead><tbody>{items.map((it, i) => {
             const srpVal = Number(it.srp || (it.unitPrice ? (it.unitPrice / 0.8) : 0));
             const isMatched = it.matchedRetail != null;
             const isPartial = it.isPartialMatch || it.matchType === "partial";
@@ -1762,7 +1530,6 @@ function InvoicePreview({ invoice, stores = [], activeStore, onClose }) {
             return <tr key={i} className={rowClass}>
               <td>{it.upc || "—"}</td>
               <td>{it.description}</td>
-              <td>{it.category || it.department || "General"}</td>
               <td>{it.quantity || 1}</td>
               <td>{money(srpVal)}</td>
               <td>{isMatched ? money(posVal) : "—"}</td>
@@ -1782,7 +1549,9 @@ function InvoicePreview({ invoice, stores = [], activeStore, onClose }) {
               <img src="/logo.png" alt="Koko Logo" style={{ width: 36, height: 36, objectFit: "contain", borderRadius: 6 }} />
             </div>
             <div className="tags-grid">
-              {items.map((it, i) => {
+              {Array.from({ length: Math.ceil(items.length / 3) }, (_, row) => (
+              <div className="tags-row" key={row}>
+              {items.slice(row * 3, row * 3 + 3).map((it, i) => {
                 const srpVal = Number(it.srp || (it.unitPrice ? (it.unitPrice / 0.8) : 0));
                 const isMatched = it.matchedRetail != null;
                 const isPartial = it.isPartialMatch || it.matchType === "partial";
@@ -1798,7 +1567,7 @@ function InvoicePreview({ invoice, stores = [], activeStore, onClose }) {
                   <div className={tagClass} key={i}>
                     <div className="tag-header">
                       <span className="tag-brand">KOKO RETAIL</span>
-                      <span className="tag-cat">{it.category || "General"}</span>
+                      <span className="tag-cat">{it.category || it.department || "General"}</span>
                     </div>
                     <div className="tag-title">{it.description || "Unnamed Item"}</div>
                     <BarcodeGtin14 upc={it.upc} />
@@ -1821,12 +1590,14 @@ function InvoicePreview({ invoice, stores = [], activeStore, onClose }) {
                   </div>
                 );
               })}
+              </div>
+              ))}
             </div>
           </div>
         ) : null}
       </div>
     </div>
-  </div>;
+  </div>, document.body);
 }
 
 function Modal({ title, onClose, children }) {

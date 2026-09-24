@@ -1,99 +1,72 @@
 # Koko Invoice
 
-Koko Invoice is a modern retail/wholesale dashboard for:
+Invite-only invoice management for shared company workspaces. React/Vite frontend, Firebase Authentication and Firestore, and a separate Express/Gemini API.
 
-- AI invoice scanning with Google Gemini
-- Multi-store price books
-- CSV catalog import
-- UPC-based price matching
-- Vendor invoice ledger
-- Quotes
-- Task management
-- Printable/PDF invoice review sheets
-- Browser persistence for app data
+## Local setup
 
-## Tech stack
+Requires Node 22+ (Java 21+ for Firestore rule tests).
 
-- React + Vite
-- Express
-- Google Gen AI SDK (`@google/genai`)
-- Papa Parse
-- Recharts
-- Lucide icons
-
-## Security choice
-
-The Gemini API key is **not** stored in browser `localStorage`.
-It stays in the server `.env` file and the browser talks to `/api/parse-invoice`.
-
-## Setup
-
-1. Install Node.js 20+.
-2. Open this folder in a terminal.
-3. Run:
-
-```bash
-npm install
-```
-
-4. Copy `.env.example` to `.env`.
-5. Add your Google AI Studio API key:
-
-```env
-GEMINI_API_KEY=...
-GEMINI_MODEL=gemini-3.6-flash
-PORT=8787
-```
-
-6. Start the app:
-
-```bash
+```sh
+npm ci
 npm run dev
 ```
 
-7. Open:
+Create a local, git-ignored `.env` with:
 
-```text
-http://localhost:5173
+```dotenv
+FIREBASE_PROJECT_ID=your-firebase-project
+GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/server-only-service-account.json
+GEMINI_API_KEY=your-server-only-key
+GEMINI_MODEL=gemini-3.5-flash
+PORT=8787
+ALLOWED_ORIGINS=https://koko-invoice.web.app,https://koko-invoice.firebaseapp.com
 ```
 
-## Price book CSV
+Use workload identity/Application Default Credentials in production rather than downloaded keys. Never use a `VITE_` prefix for server secrets. The server refuses to start without its project ID and Gemini key.
 
-Accepted column names are flexible. A recommended CSV is:
+The frontend accepts `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`, `VITE_FIREBASE_MESSAGING_SENDER_ID`, and `VITE_FIREBASE_APP_ID`. These are public Firebase project identifiers; authorization is enforced through rules and verified sessions. Configure them together for your production project.
 
-```csv
-UPC,Name,Department,Price
-049000050103,Coca-Cola 20oz,Beverages,2.49
-028400090896,Lay's Classic 2.65oz,Candy & Snacks,2.69
+In development Vite proxies `/api` to port 8787. In production set `VITE_API_BASE_URL=https://your-api.example` **before building**, or configure your hosting reverse proxy to forward `/api/*` to the API. Firebase Hosting alone does not run the API; its current rewrite serves the frontend only.
+
+## Accounts and roles
+
+Enable Firebase Email/Password sign-in and configure authorized domains and password reset emails. Create invited users in the Firebase console. There is no public registration UI. An account without server-granted workspace access cannot read records or run AI scans.
+
+Grant access from a trusted operator environment:
+
+```sh
+node scripts/customer-access.js FIREBASE_UID grant COMPANY_ID owner
+node scripts/customer-access.js STAFF_UID grant COMPANY_ID staff
+node scripts/customer-access.js VIEWER_UID grant COMPANY_ID viewer
+node scripts/customer-access.js FIREBASE_UID revoke
 ```
 
-The importer also recognizes common variants such as `UPC/PLU`, `Product`, `Description`, `Category`, `Retail`, and `SRP`.
+Company IDs use letters, digits, underscores and hyphens, up to 128 characters. Each account belongs to one company. Owner, admin and staff can edit business records; viewers can only read and cannot run paid scans. Account provisioning and role changes are operator-managed, not self-service. Only trusted operators with Firebase Admin credentials can grant roles. Sign in again after changing claims. Revocation disables the server-managed access record immediately. Both Firestore rules and the API check that record, so an already-issued token cannot retain workspace access. Role or company changes also invalidate the old access context.
 
-## Gemini parsing
+Records live under `companies/{companyId}/{stores|invoices|quotes|tasks}`. Price-book chunks inherit the same company boundary. The demo uses only in-memory sample data and does not persist business records or get access to the API. Legacy browser login, Gemini keys, and business-data caches are removed on startup; export any browser-only data before upgrading.
 
-The API accepts:
+## AI limits
 
-- PDF
-- PNG
-- JPG/JPEG
-- WEBP
+- Revocation-checked Firebase ID token and invited company role required.
+- 30 requests/minute/IP per server process; spoofed forwarded IP headers are not trusted.
+- Durable, transactional limits of 10 attempts/minute and 100 attempts/day per user, plus 500 attempts/day per company, shared across instances. Failed attempts count toward limits.
+- At most four in-flight requests per server, one per user on that server.
+- Up to five files, 20 MB combined file content, bounded multipart overhead, ten total PDF/image pages.
+- PDF parsing and image metadata validation run in a worker with a five-second deadline. Images are limited to 25 megapixels, 10,000 pixels per side, and a single frame.
+- Upload deadline 30 seconds; Gemini deadline 60 seconds and bounded output.
+- Production Gemini credentials stay on the server; client-supplied keys are not supported.
 
-The server requests structured JSON with:
+At larger scale place a shared IP rate limiter/WAF and request-size limit in front of the service. Keep instance counts bounded and set provider quotas/budget alerts; request limits bound attempts rather than guaranteeing a specific dollar spend. Restrict direct API ingress to your trusted gateway if configuring forwarded IP trust.
 
-- vendor
-- invoice number/date
-- subtotal/tax/total
-- description
-- UPC
-- category
-- quantity
-- unit cost
-- SRP
-- line total
+## Tests and release
 
-After extraction, the server matches UPCs against the selected store price book and calculates the price difference.
+```sh
+npm test
+npm run test:rules
+npm run build
+# With the local frontend running and Chrome installed:
+npm run test:pdf
+npm audit --omit=dev
+```
 
-## Notes for production
-
-This starter intentionally uses `localStorage` for store data so it runs without a database.
-For a deployed multi-user version, the next recommended upgrade is PostgreSQL + authentication + cloud object storage for invoice PDFs/images.
+See [release instructions](docs/RELEASE.md) for migration and rollout. `npm run deploy` deploys frontend and rules, **not the API**. Do not deploy only hosting and leave legacy permissive rules in place.
